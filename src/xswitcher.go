@@ -53,7 +53,7 @@ Referrers:
 import "C"
 
 import (
-    "xswitcher/embeddedConfig"
+	"xswitcher/embeddedConfig"
 	flag "github.com/spf13/pflag"       // CLI keys like python's "argparse". More flexible, comparing with "gnuflag"
 	"fmt"
 	"io/ioutil"
@@ -142,13 +142,13 @@ var (
 	CONFIG_PATH string = "/etc/xswitcher/xswitcher.conf"
 
 	debug bool
-    DEBUG *bool = &debug
+	DEBUG *bool = &debug
 
 	verbose bool
-    VERBOSE *bool = &verbose
+	VERBOSE *bool = &verbose
 
 	test_mode bool
-    TEST_MODE *bool = &test_mode
+	TEST_MODE *bool = &test_mode
 
 	// Config
 	ScanDevices TScanDevices
@@ -193,7 +193,7 @@ var (
 	revert_to C.int // Set 1-thread vars out of GC
 	x_class *C.XClassHint
 	// Cache ActiveWindowId() along key processing
-	ActiveWindowId C.Window 
+	ActiveWindowId C.Window
 	ActiveWindowClass string
 	WC *TWindowClass
 
@@ -221,7 +221,7 @@ func config() {
 		conf_ []byte
 		err error
 	)
-    config_path := &CONFIG_PATH
+	config_path := &CONFIG_PATH
 
 	if env_config, ok := os.LookupEnv("CONFIG"); ok {
 		*config_path = env_config
@@ -324,7 +324,6 @@ func config() {
 						}
 					}
 					WindowClasses = append(WindowClasses, class)
-
 				}
 			default:
 				panic(fmt.Errorf("Config error: [[WindowClasses]] must be a slice of sections, not a single [WindowClasses] section"))
@@ -564,7 +563,7 @@ func sequences() {
 	if *VERBOSE || *DEBUG {
 		fmt.Printf("WordHead => %s\n", template(Actions.WordHead))
 	}
-	
+
 	return
 }
 
@@ -628,7 +627,7 @@ func keys() {
 // There must be 1 buffer per each X-window.
 // Or just to reset the buffer on each focus change?
 func getActiveWindowId() (idChanged bool) { // _Ctype_Window == uint32
-    idChanged = true
+	idChanged = true
 	ActiveWindowId_old := ActiveWindowId
 	if C.XGetInputFocus(display, &ActiveWindowId, &revert_to) == 0 {
 		ActiveWindowId = 0
@@ -722,7 +721,7 @@ func getXModifiers() uint32 {
 	} else {
 		delete(CTRL, key_name[evdev.KEY_NUMLOCK])
 	}
-	
+
 	return uint32(state.mods)
 }
 
@@ -740,7 +739,7 @@ func Language(lang int) (int) {
 
 	return int(state.group)
 }
-     
+
 // Push or release the key on virtual keyboard
 func sendKey(key t_key) {
 	switch key.value {
@@ -751,7 +750,7 @@ func sendKey(key t_key) {
 		kb.Down(key.code)
 		kb.Sync()
 	}
-    time.Sleep(5 * time.Millisecond)
+	time.Sleep(5 * time.Millisecond)
 }
 
 // Single key press on virtual keyboard
@@ -762,7 +761,7 @@ func pressKey(key int) {
 
 // ACTIONS (RetypeWord, Switch, Layout, Respawn, Exec)
 func RetypeWord(A *TAction) {
-    if (len(WORD) - EXTRA) < 1 { // WTF?!
+	if (len(WORD) - EXTRA) < 1 { // WTF?!
     	fmt.Println("RetypeWord error: WORD is smaller than EXTRA!", EXTRA)
     	dropWord()
     	return
@@ -771,7 +770,7 @@ func RetypeWord(A *TAction) {
 	for i := 0; i < (len(WORD) - EXTRA); i++ {
 		if WordChars.MatchString(key_name[WORD[i].code] + ":" + strconv.Itoa(int(WORD[i].value))) {
 			count++
-		} 
+		}
 		if WORD[i].value == 0 {
 			switch WORD[i].code {
 			case uint16(key_def["SPACE"]):
@@ -781,7 +780,7 @@ func RetypeWord(A *TAction) {
 		    	dropWord()
 		    	return
 			}
-		} 
+		}
 	}
 
 	// Clean the word
@@ -811,7 +810,7 @@ func RetypeWord(A *TAction) {
     }
 	// Retype WORD
 	RETYPE := len(WORD) - EXTRA
-/* Not so. I found that input events can ommit "press" codes while typing too fast.
+/* Not so. I found that input events can omit "press" codes while typing too fast.
 	if WORD[0].value == 0 { // Restore "down" state before resending "up"
 	    sendKey(t_key{WORD[0].code, 1})
 		if *VERBOSE {
@@ -859,7 +858,7 @@ func Switch(A *TAction) {
 	l := Language(-1)
 
 	for i := 0; i < len(A.Layouts); i++ {
-		if l == A.Layouts[i] { 
+		if l == A.Layouts[i] {
 			next = l + 1
 		}
 	}
@@ -922,7 +921,7 @@ TEST:
 		}
 		if test.SEQ != nil {
 			if test.SEQ.MatchString(TAIL.String()[1:]) {
-				tail := test.SEQ.FindString(TAIL.String()[1:]) // The last keys must be ommited, e.g. while retyping word.
+				tail := test.SEQ.FindString(TAIL.String()[1:]) // The last keys must be omited, e.g. while retyping word.
 				// Count tail commas
 				EXTRA = strings.Count(tail, ",") + 1
 				skip := 0
@@ -947,17 +946,17 @@ func doAction(name *string) { // name of ActionSet
 	for _, act := range a.Action {
 		if Action.MatchString(act) { // Action.xxx >> recursive call
 		    if *DEBUG {
-				fmt.Println(act, "[]") 
+				fmt.Println(act, "[]")
 		    }
 			name := strings.TrimLeft(ActionName.FindString(act), ".")
 			doAction(&name)
 		} else {
 		    if _, ok = ACTIONS[act]; !ok {
 		    	fmt.Printf("WTF! No such action \"%s\"", act)
-		    	return 
+		    	return
 		    }
 		    if *DEBUG {
-				fmt.Println(act) 
+				fmt.Println(act)
 		    }
 			ACTIONS[act](&a)
 		}
@@ -1045,7 +1044,7 @@ func checkAppend(event t_key, slice ...*t_keys) {
 	if getActiveWindowId() { // New focused window detected
 		// Drop buffers, but store this event
 		dropBuffers()
-		setWindowActions() 
+		setWindowActions()
 	}
 
 	for _, key := range slice {
@@ -1219,14 +1218,14 @@ func serve() {
 			if event.code < 0 || event.code > 767 { // Fuse against out-of-bounds: in old times there was need in.
 				fmt.Printf("!!! Invalid event code: %d\n", event.code);
 			} else {
-                if *TEST_MODE {
-                	fmt.Fprintf(os.Stderr, ",%s:%d", key_name[event.code], event.value)
-                	continue
-                }
+				if *TEST_MODE {
+					fmt.Fprintf(os.Stderr, ",%s:%d", key_name[event.code], event.value)
+					continue
+				}
 				KEYS[event.code](event)
 			}
 		}
-    }
+	}
 }
 
 func main() {
@@ -1244,7 +1243,7 @@ func main() {
 	ACTIONS["Layout"] = Layout
 	ACTIONS["Respawn"] = Respawn
 	ACTIONS["Exec"] = Exec
-	
+
 	config() // Parse config
 	sequences() // Compile expressions
 	keys() // Initialize key actions
