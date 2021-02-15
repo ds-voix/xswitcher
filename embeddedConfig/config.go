@@ -1,3 +1,6 @@
+package embeddedConfig
+
+const Toml string = `
 # xswitcher config file. Uses TOML markup language.
 [ScanDevices]
  # Must exist on start. Self-respawn in case it is younger then 30s
@@ -127,3 +130,4 @@
   Exec = "/path/to/exec -a -b --key_x"
   Wait = true
   SendBuffer = "Word" # External hook can process collected buffer by it's own means.
+`
