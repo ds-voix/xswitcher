@@ -64,7 +64,7 @@ import (
 	"strconv"
 	"syscall"
 	"time"
-//    "unsafe"
+//	"unsafe"
 	"github.com/pelletier/go-toml"      // Actual TOML parser
 	"github.com/gvalkov/golang-evdev"   // Keyboard and mouse events
 	"github.com/micmonay/keybd_event"   // Virtual keyboard !!(must be improved to deal with complex input)
@@ -637,7 +637,7 @@ func getActiveWindowId() (idChanged bool) { // _Ctype_Window == uint32
 	if ActiveWindowId == ActiveWindowId_old { return false}
 
 	if ActiveWindowId <= 1 {
-	    ActiveWindowClass = ""
+		ActiveWindowClass = ""
 		fmt.Println("ActiveWindowId <= 1")
 		return
 	}
@@ -689,7 +689,21 @@ func dropBuffers() {
 }
 
 func dropWord() {
-	WORD = nil
+	count := 0
+	l := len(WORD) - 1
+	for i := l; i >= 0; i-- { // Store chars pressed at the end of matched regex
+		if WORD[i].value == 1 && WordChars.MatchString(key_name[WORD[i].code] + ":0") {
+			count++
+		} else {
+			break
+		}
+	}
+	if count > 0 {
+		WORD = WORD[(l - count + 1):]
+	} else {
+		WORD = nil
+	}
+
 	delete(CTRL, "WORD")
 	CTRL_WORD = copyCTRL(CTRL)
 	COMPOSE = 0
@@ -733,7 +747,7 @@ func Language(lang int) (int) {
 	C.XkbGetState(display, C.XkbUseCoreKbd, state);
 	if lang >= 0 {
 		layout = C.uint(lang)
-	    C.XkbLockGroup(display, C.XkbUseCoreKbd, layout);
+		C.XkbLockGroup(display, C.XkbUseCoreKbd, layout);
 		C.XkbGetState(display, C.XkbUseCoreKbd, state);
 	}
 
@@ -762,10 +776,10 @@ func pressKey(key int) {
 // ACTIONS (RetypeWord, Switch, Layout, Respawn, Exec)
 func RetypeWord(A *TAction) {
 	if (len(WORD) - EXTRA) < 1 { // WTF?!
-    	fmt.Println("RetypeWord error: WORD is smaller than EXTRA!", EXTRA)
-    	dropWord()
-    	return
-    }
+		fmt.Println("RetypeWord error: WORD is smaller than EXTRA!", EXTRA)
+		dropWord()
+		return
+	}
 	count := 0
 	for i := 0; i < (len(WORD) - EXTRA); i++ {
 		if WordChars.MatchString(key_name[WORD[i].code] + ":" + strconv.Itoa(int(WORD[i].value))) {
@@ -776,9 +790,9 @@ func RetypeWord(A *TAction) {
 			case uint16(key_def["SPACE"]):
 				count++
 			case uint16(key_def["BACKSPACE"]):
-		    	fmt.Println("RetypeWord error: BACKSPACE inside WORD!")
-		    	dropWord()
-		    	return
+				fmt.Println("RetypeWord error: BACKSPACE inside WORD!")
+				dropWord()
+				return
 			}
 		}
 	}
@@ -805,56 +819,64 @@ func RetypeWord(A *TAction) {
 	}
 
 	if *VERBOSE {
-	    fmt.Printf("RETYPE: ") // Helpfull to debug e.g. keyboard bounce
-	    // "RETYPE: {17 1}{16 0}{17 0} :DONE" >> Oh, shi!
-    }
+		fmt.Printf("RETYPE: ") // Helpfull to debug e.g. keyboard bounce
+		// "RETYPE: {17 1}{16 0}{17 0} :DONE" >> Oh, shi!
+	}
+
 	// Retype WORD
 	RETYPE := len(WORD) - EXTRA
-/* Not so. I found that input events can omit "press" codes while typing too fast.
-	if WORD[0].value == 0 { // Restore "down" state before resending "up"
-	    sendKey(t_key{WORD[0].code, 1})
+
+	o := make(map[uint16] bool) // Patch "orphaned" key releases. But! There's no way to restore the correct order.
+	// Try to reorder the first 3 "orphaned" key releases in the most probably chain.
+	if RETYPE > 2 && WORD[2].value == 0  && WORD[0].code != WORD[2].code && WORD[1].code != WORD[2].code {
+		sendKey(t_key{WORD[2].code, 1})
+		o[WORD[2].code] = true
 		if *VERBOSE {
-		    fmt.Printf("*{%d 1}",WORD[0].code)
-	    }
+			fmt.Printf("{%d*1}",WORD[2].code)
+		}
 	}
 	if RETYPE > 1 && WORD[1].value == 0  && WORD[0].code != WORD[1].code {
-	    sendKey(t_key{WORD[1].code, 1})
+		sendKey(t_key{WORD[1].code, 1})
+		o[WORD[1].code] = true
 		if *VERBOSE {
-		    fmt.Printf("*{%d 1}",WORD[1].code)
-    	}
+			fmt.Printf("{%d*1}",WORD[1].code)
+		}
 	}
-	if RETYPE > 2 && WORD[2].value == 0  && WORD[0].code != WORD[2].code && WORD[1].code != WORD[2].code {
-	    sendKey(t_key{WORD[2].code, 1})
+	if WORD[0].value == 0 { // Restore "down" state before resending "up"
+		sendKey(t_key{WORD[0].code, 1})
+		o[WORD[0].code] = true
 		if *VERBOSE {
-		    fmt.Printf("*{%d 1}",WORD[2].code)
-    	}
+			fmt.Printf("{%d*1}",WORD[0].code)
+		}
 	}
-*/
-	o := make(map[uint16] bool) // Patch "orphaned" key releases
+
 	for i := 0; i < RETYPE; i++ {
 		if WORD[i].value == 0 {
 			if !o[WORD[i].code] {
-			    sendKey(t_key{WORD[i].code, 1})
-		    } else {
+				sendKey(t_key{WORD[i].code, 1})
+				if *VERBOSE {
+					fmt.Printf("{%d+1}",WORD[i].code)
+				}
+			} else {
 				o[WORD[i].code] = false
-		    }
+			}
 		} else {
 			o[WORD[i].code] = true
 		}
-	    sendKey(WORD[i])
+		sendKey(WORD[i])
 		if *VERBOSE {
-		    fmt.Printf("%v",WORD[i])
-	    }
+			fmt.Printf("%v",WORD[i])
+		}
 	}
 	if *VERBOSE {
-	    fmt.Printf(" :DONE\n")
+		fmt.Printf(" :DONE\n")
 	}
 	WORD = WORD[ 0 : (len(WORD) - EXTRA)]
 	CTRL["WORD"] = true
 }
 
 func Switch(A *TAction) {
-    next := 0
+	next := 0
 	l := Language(-1)
 
 	for i := 0; i < len(A.Layouts); i++ {
@@ -883,7 +905,7 @@ func setWindowActions() {
 	WC = nil
 	//Depending on WindowClass
 	for _, w := range WindowClasses {
-	    if w.re != nil {
+		if w.re != nil {
 			if ActiveWindowClass == "" { // Empty class name match empty regex
 				continue
 			} else {
@@ -932,7 +954,7 @@ TEST:
 				}
 				EXTRA -= skip
 				return true
-            }
+			}
 		}
 	}
 	return false
@@ -945,19 +967,19 @@ func doAction(name *string) { // name of ActionSet
 
 	for _, act := range a.Action {
 		if Action.MatchString(act) { // Action.xxx >> recursive call
-		    if *DEBUG {
+			if *DEBUG {
 				fmt.Println(act, "[]")
-		    }
+			}
 			name := strings.TrimLeft(ActionName.FindString(act), ".")
 			doAction(&name)
 		} else {
-		    if _, ok = ACTIONS[act]; !ok {
-		    	fmt.Printf("WTF! No such action \"%s\"", act)
-		    	return
-		    }
-		    if *DEBUG {
+			if _, ok = ACTIONS[act]; !ok {
+				fmt.Printf("WTF! No such action \"%s\"", act)
+				return
+			}
+			if *DEBUG {
 				fmt.Println(act)
-		    }
+			}
 			ACTIONS[act](&a)
 		}
 	}
@@ -968,8 +990,8 @@ func doAction(name *string) { // name of ActionSet
 func doWindowActions() {
 	TAIL.Reset()
 
-    if WC == nil { return }
-    if WC.Actions == "" { return }
+	if WC == nil { return }
+	if WC.Actions == "" { return }
 
 	// Test sequence
 	l := Actions.SeqLength
@@ -1184,7 +1206,7 @@ func Respawn(*TAction) { // Completelly respawn xswitcher.
 }
 
 func serve() {
-    var event t_key
+	var event t_key
 
 	stat, err := os.Stat(ScanDevices.Test)
 	if err != nil {
@@ -1194,7 +1216,7 @@ func serve() {
 
 	// Must wait for DE to be started. Otherwise, DE sees stupid keyboard and unmaps my rigth alt|win keys at all!
 	if now.Sub(stat.ModTime()) < (time.Duration(ScanDevices.Respawn) * time.Second) {
-	    go func() {
+		go func() {
 			time.Sleep((time.Duration(ScanDevices.Respawn) * time.Second) - now.Sub(stat.ModTime()))
 			Respawn(nil)
 		}()
