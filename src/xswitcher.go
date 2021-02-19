@@ -60,6 +60,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+//	"sort"
 	"strings"
 	"strconv"
 	"syscall"
@@ -430,7 +431,7 @@ func config() {
 			panic(fmt.Errorf("Config error: unknown section name [%s]", key))
 		}
 	}
-// Finally, check that ActionSet contains all Custom Actions
+	// Finally, check that ActionSet contains all Custom Actions
 	for key, _ := range Actions.Custom {
 		if _, ok := ActionSet[key]; !ok {
 			panic(fmt.Errorf("Config error: Action definition not found for \"Action.%s\"", key))
@@ -459,20 +460,7 @@ func seqParse(str string, act string) (seq TSequence) {
 	var err error
 	// 1. Substitute templates
 	str = template(str)
-/*
-	tpl := TEMPLATE.FindAllStringIndex(str, -1)
-	if tpl != nil {
-		for i := len(tpl)-1; i >= 0; i-- {
-			match := tpl[i]
-			t := str[ (match[0]+1):(match[1]-1) ]
-			if _tpl, ok := Templates[t]; !ok {
-				fmt.Printf("Parse warning: Template definition not found for @%s@. This expression will be used \"as is\".\n", t)
-			} else {
-				str = str[ 0:match[0] ] + _tpl + str[ (match[1]) : ]
-			}
-		}
-	}
-*/
+
 	// 2. "OFF:()" state
 	tpl := OFF.FindAllStringIndex(str, -1)
 	if tpl != nil {
@@ -688,7 +676,8 @@ func dropBuffers() {
 	COMPOSE = 0
 }
 
-func dropWord() {
+func newWord() { // !!! "s=df" >> "ssdf" [s:1,SPACE:0,s:0]
+/*
 	count := 0
 	l := len(WORD) - 1
 	for i := l; i >= 0; i-- { // Store chars pressed at the end of matched regex
@@ -700,6 +689,13 @@ func dropWord() {
 	}
 	if count > 0 {
 		WORD = WORD[(l - count + 1):]
+	} else {
+		WORD = nil
+	}
+*/
+	end := len(WORD) - 1
+	if WORD[end].value == 1 {
+		WORD = WORD[end:]
 	} else {
 		WORD = nil
 	}
@@ -777,11 +773,23 @@ func pressKey(key int) {
 func RetypeWord(A *TAction) {
 	if (len(WORD) - EXTRA) < 1 { // WTF?!
 		fmt.Println("RetypeWord error: WORD is smaller than EXTRA!", EXTRA)
-		dropWord()
+		newWord()
 		return
 	}
 	count := 0
+	// Patch "orphaned" key releases.
+	o := make(map[uint16] bool) // True since key-down till key-up.
 	for i := 0; i < (len(WORD) - EXTRA); i++ {
+		if WORD[i].value == 0 {
+			if !o[WORD[i].code] {
+				continue
+			} else {
+				o[WORD[i].code] = false
+			}
+		} else {
+			o[WORD[i].code] = true
+		}
+
 		if WordChars.MatchString(key_name[WORD[i].code] + ":" + strconv.Itoa(int(WORD[i].value))) {
 			count++
 		}
@@ -791,7 +799,7 @@ func RetypeWord(A *TAction) {
 				count++
 			case uint16(key_def["BACKSPACE"]):
 				fmt.Println("RetypeWord error: BACKSPACE inside WORD!")
-				dropWord()
+				newWord()
 				return
 			}
 		}
@@ -802,60 +810,38 @@ func RetypeWord(A *TAction) {
 		pressKey(evdev.KEY_BACKSPACE)
 	}
 
-	// CAPSLOCK
-	if CTRL[ key_name[evdev.KEY_CAPSLOCK] ] != CTRL_WORD[ key_name[evdev.KEY_CAPSLOCK] ] {
-		pressKey(evdev.KEY_CAPSLOCK)
-	}
-	// NUMLOCK
-	if CTRL[ key_name[evdev.KEY_NUMLOCK] ] != CTRL_WORD[ key_name[evdev.KEY_NUMLOCK] ] {
-		pressKey(evdev.KEY_NUMLOCK)
-	}
-
 	// Initial CTRL state
 	for k, v := range CTRL_WORD {
-		if v {
-			sendKey(t_key{uint16(key_def[k]), 1})
+		if v && ! CTRL[k] {
+			switch key_def[k] {
+				case evdev.KEY_CAPSLOCK:
+					pressKey(evdev.KEY_CAPSLOCK)
+				case evdev.KEY_NUMLOCK:
+					pressKey(evdev.KEY_NUMLOCK)
+				default:
+					sendKey(t_key{uint16(key_def[k]), 1})
+			}
 		}
-	}
-
-	if *VERBOSE {
-		fmt.Printf("RETYPE: ") // Helpfull to debug e.g. keyboard bounce
-		// "RETYPE: {17 1}{16 0}{17 0} :DONE" >> Oh, shi!
 	}
 
 	// Retype WORD
 	RETYPE := len(WORD) - EXTRA
 
-	o := make(map[uint16] bool) // Patch "orphaned" key releases. But! There's no way to restore the correct order.
-	// Try to reorder the first 3 "orphaned" key releases in the most probably chain.
-	if RETYPE > 2 && WORD[2].value == 0  && WORD[0].code != WORD[2].code && WORD[1].code != WORD[2].code {
-		sendKey(t_key{WORD[2].code, 1})
-		o[WORD[2].code] = true
-		if *VERBOSE {
-			fmt.Printf("{%d*1}",WORD[2].code)
-		}
-	}
-	if RETYPE > 1 && WORD[1].value == 0  && WORD[0].code != WORD[1].code {
-		sendKey(t_key{WORD[1].code, 1})
-		o[WORD[1].code] = true
-		if *VERBOSE {
-			fmt.Printf("{%d*1}",WORD[1].code)
-		}
-	}
-	if WORD[0].value == 0 { // Restore "down" state before resending "up"
-		sendKey(t_key{WORD[0].code, 1})
-		o[WORD[0].code] = true
-		if *VERBOSE {
-			fmt.Printf("{%d*1}",WORD[0].code)
-		}
+	if *VERBOSE {
+		fmt.Printf("RETYPE: %v", CTRL_WORD) // Helpfull to debug e.g. keyboard bounce
+		// "RETYPE: {17 1}{16 0}{17 0} :DONE" >> Oh, shi!
 	}
 
 	for i := 0; i < RETYPE; i++ {
 		if WORD[i].value == 0 {
 			if !o[WORD[i].code] {
-				sendKey(t_key{WORD[i].code, 1})
-				if *VERBOSE {
-					fmt.Printf("{%d+1}",WORD[i].code)
+				switch WORD[i].code { // !! There must be StateKeys-driven check
+				case evdev.KEY_LEFTCTRL, evdev.KEY_LEFTSHIFT, evdev.KEY_LEFTALT, evdev.KEY_RIGHTCTRL, evdev.KEY_RIGHTSHIFT, evdev.KEY_RIGHTALT, evdev.KEY_LEFTMETA, evdev.KEY_RIGHTMETA:
+				default:
+					if *VERBOSE {
+						fmt.Printf("{%d x}", WORD[i].code)
+					}
+					continue
 				}
 			} else {
 				o[WORD[i].code] = false
@@ -1022,7 +1008,7 @@ func doWindowActions() {
 		if *VERBOSE || *DEBUG {
 			fmt.Printf("NewWord: %s\n", TAIL.String()[1:])
 		}
-		dropWord()
+		newWord()
 		return
 	}
 	for name, act := range ActSeq { // Is there some reason to do more then 1 action?
