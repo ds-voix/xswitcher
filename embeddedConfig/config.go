@@ -80,10 +80,12 @@ const Toml string = `
  # Count only those chars in word which must be removed (by sending the same count of BS keys) while "RetypeWord".
  WordChars = "(^@WORD@:0$)"
  # Drop word buffer and start collecting new one
+ # !!! Note that (@WORD@:1) /key-press/ at the ent of regex allows to collect the last char,
+ #     while (@WORD@:0) cuts the WORD strictly at the end of sequence. !!!
  NewWord = [ "OFF:(CTRL|ALT|META) SEQ:(@SEPARATOR@:[12]),((CAPS:[012])|([LR]_SHIFT:[12])|((@WORD@|@SEPARATOR@):0),)*(@WORD@:1)", # "@WORD@:0" then collects the char
              "SEQ:(@WORD@:2,@WORD@:0)", # Drop repeated char at all: unlikely it needs correction
-             # Control sequences
-             "SEQ:((([LR]_CTRL|L_ALT|[LR]_META):[12]),(((@WORD@|@SEPARATOR@):[012]),)+((([LR]_CTRL|L_ALT|[LR]_META):0),)+(@WORD@:1))", # "@WORD@:0" then collects the char
+             # Control sequences. !!! Must be dropped ASAP.
+             "SEQ:((([LR]_CTRL|L_ALT|[LR]_META):[12])(,((@WORD@|@SEPARATOR@):[012]))+(,(([LR]_CTRL|L_ALT|[LR]_META):0))+(,@WORD@:1)?)", # "@WORD@:0" then collects the char
              "ON:(WORD) SEQ:(,@WORD@:1)" ] # New input after previous correction. "@WORD@:0" then collects the char
  # Drop all buffers
  NewSentence = [ "SEQ:(ENTER:0)" ]
