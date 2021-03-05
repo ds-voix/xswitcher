@@ -214,6 +214,7 @@ var (
 	CTRL_SENTENCE map[string]bool // CTRL at the beginning of the SENTENCE
 	COMPOSE int // Compose counter
 	EXTRA int // Extra keys (to call the Action), must not be retyped.
+	DOWN = make(map[uint16] int) // In any case, all virtual keys MUST BE RELEASED at the end of retyping.
 )
 
 func config() {
@@ -676,25 +677,9 @@ func dropBuffers() {
 	COMPOSE = 0
 }
 
-func newWord() { // !!! "s=df" >> "ssdf" [s:1,SPACE:0,s:0]
-/*
-	count := 0
-	l := len(WORD) - 1
-	for i := l; i >= 0; i-- { // Store chars pressed at the end of matched regex
-		if WORD[i].value == 1 && WordChars.MatchString(key_name[WORD[i].code] + ":0") {
-			count++
-		} else {
-			break
-		}
-	}
-	if count > 0 {
-		WORD = WORD[(l - count + 1):]
-	} else {
-		WORD = nil
-	}
-*/
+func newWord() {
 	end := len(WORD) - 1
-	if WORD[end].value == 1 {
+	if (end >= 0) && (WORD[end].value == 1) {
 		WORD = WORD[end:]
 	} else {
 		WORD = nil
@@ -776,7 +761,8 @@ func RetypeWord(A *TAction) {
 		newWord()
 		return
 	}
-	count := 0
+	count := 0 // Count chars to be deleted
+	seq := 0 // Incremental key event counter
 	// Patch "orphaned" key releases.
 	o := make(map[uint16] bool) // True since key-down till key-up.
 	for i := 0; i < (len(WORD) - EXTRA); i++ {
@@ -820,6 +806,8 @@ func RetypeWord(A *TAction) {
 					pressKey(evdev.KEY_NUMLOCK)
 				default:
 					sendKey(t_key{uint16(key_def[k]), 1})
+					DOWN[uint16(key_def[k])] = seq
+					seq++
 			}
 		}
 	}
@@ -850,6 +838,12 @@ func RetypeWord(A *TAction) {
 			o[WORD[i].code] = true
 		}
 		sendKey(WORD[i])
+		if WORD[i].value == 1 {
+			DOWN[WORD[i].code] = seq
+		} else {
+			delete(DOWN, WORD[i].code)
+		}
+		seq++
 		if *VERBOSE {
 			fmt.Printf("%v",WORD[i])
 		}
@@ -859,8 +853,19 @@ func RetypeWord(A *TAction) {
 	}
 	WORD = WORD[ 0 : (len(WORD) - EXTRA)]
 	CTRL["WORD"] = true
+
+	// Clear virtual keyboard state
+	if len(DOWN) > 0 {
+		fmt.Println("RetypeWord warning: found pushed keys after retyping was done! %v", DOWN)
+		for k, _ := range DOWN {
+			sendKey(t_key{k, 0})
+		}
+	}
 }
 
+// ToDo: newWord() | dropBuffers() must be implemented here in "smart" way.
+// Nested action: leave buffers as is. Or implement extra option "what to do with buffers".
+// Single action: drop. Or be smarter and remember the layout inside key sequences...
 func Switch(A *TAction) {
 	next := 0
 	l := Language(-1)
@@ -889,7 +894,7 @@ func Exec(A *TAction) {
 // Perform actions depending on WindowClasses[]
 func setWindowActions() {
 	WC = nil
-	//Depending on WindowClass
+	// Depending on WindowClass
 	for _, w := range WindowClasses {
 		if w.re != nil {
 			if ActiveWindowClass == "" { // Empty class name match empty regex
