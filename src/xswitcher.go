@@ -112,6 +112,7 @@ type TAction struct {
 	Exec string
 	Wait bool
 	SendBuffer string
+	Clean string
 }
 
 type TSequence struct {
@@ -690,6 +691,14 @@ func newWord() {
 	COMPOSE = 0
 }
 
+func DropBuffers(A *TAction) {
+	dropBuffers()
+}
+
+func Clean(A *TAction) {
+	newWord()
+}
+
 func checkLanguageId() bool {
 	state := new(C.struct__XkbStateRec)
 	C.XkbGetState(display, C.XkbUseCoreKbd, state);
@@ -727,6 +736,9 @@ func Language(lang int) (int) {
 
 	C.XkbGetState(display, C.XkbUseCoreKbd, state);
 	if lang >= 0 {
+		if int(state.group) != lang {
+			CTRL["WORD"] = true
+		}
 		layout = C.uint(lang)
 		C.XkbLockGroup(display, C.XkbUseCoreKbd, layout);
 		C.XkbGetState(display, C.XkbUseCoreKbd, state);
@@ -881,6 +893,8 @@ func Switch(A *TAction) {
 	}
 
 	Language(A.Layouts[next])
+
+	CTRL["WORD"] = true
 }
 
 func Layout(A *TAction) {
@@ -1251,6 +1265,8 @@ func main() {
 	}()
 
 	// Hooks hashtable
+	ACTIONS["DropBuffers"] = DropBuffers // Drop all buffers
+	ACTIONS["Clean"] = Clean             // New word (clean word buffers)
 	ACTIONS["RetypeWord"] = RetypeWord
 	ACTIONS["Switch"] = Switch
 	ACTIONS["Layout"] = Layout
