@@ -54,6 +54,7 @@ import "C"
 
 import (
 	"xswitcher/embeddedConfig"
+	"xswitcher/exec"
 	flag "github.com/spf13/pflag"       // CLI keys like python's "argparse". More flexible, comparing with "gnuflag"
 	"fmt"
 	"io/ioutil"
@@ -69,6 +70,7 @@ import (
 	"github.com/pelletier/go-toml"      // Actual TOML parser
 	"github.com/gvalkov/golang-evdev"   // Keyboard and mouse events
 	"github.com/micmonay/keybd_event"   // Virtual keyboard !!(must be improved to deal with complex input)
+	"github.com/kballard/go-shellquote" // joining/splitting strings using sh's word-splitting rules
 )
 
 // Config
@@ -81,7 +83,7 @@ type TScanDevices struct {
 }
 
 type TActionKeys struct {
-	Layouts []int `default:"[0,1]"`
+	Layouts []int   `default:"[0,1]"`
 	Add []string
 	Drop []string
 	Test []string
@@ -96,9 +98,9 @@ type TWindowClass struct {
 }
 
 type TActions struct {
-	SeqLength int   `default:8`
+	SeqLength int    `default:8`
 	WordChars string `default:"(^([0-9A-Z=-]|GRAVE|APOSTROPHE|SEMICOLON|[LR]_BRACE|COMMA|DOT|(BACK)?SLASH|KP[0-9]):0$)"`
-	WordHead string `default:"(^([0-9A-Z]|GRAVE|APOSTROPHE|SEMICOLON|[LR]_BRACE|COMMA|DOT|(BACK)?SLASH|KP[0-9]):1$)"`
+	WordHead string  `default:"(^([0-9A-Z]|GRAVE|APOSTROPHE|SEMICOLON|[LR]_BRACE|COMMA|DOT|(BACK)?SLASH|KP[0-9]):1$)"`
 	NewWord []string
 	NewSentence []string
 	Compose []string
@@ -109,10 +111,17 @@ type TAction struct {
 	Action []string
 	Layout int `default:"-1"`
 	Layouts []int
+	// Exec options
 	Exec string
-	Wait bool
-	SendBuffer string
-	Clean string
+	Timeout int       `default:"100"`
+	Wait bool         `default:"false"`
+	SendBuffer string `default:"WORD"`
+	UseShell bool     `default:"true"`
+	Directory string
+	CleanEnv bool     `default:"true"`
+	Environment []string 
+	UID string
+	GID string
 }
 
 type TSequence struct {
@@ -868,7 +877,7 @@ func RetypeWord(A *TAction) {
 
 	// Clear virtual keyboard state
 	if len(DOWN) > 0 {
-		fmt.Println("RetypeWord warning: found pushed keys after retyping was done! %v", DOWN)
+		fmt.Printf("RetypeWord warning: found pushed keys after retyping was done! %v", DOWN)
 		for k, _ := range DOWN {
 			sendKey(t_key{k, 0})
 		}
@@ -902,6 +911,55 @@ func Layout(A *TAction) {
 }
 
 func Exec(A *TAction) {
+/*
+	Exec string
+	Timeout int       `default:"100"`
+	Wait bool         `default:"false"`
+	SendBuffer string `default:"WORD"`
+	UseShell bool     `default:"true"`
+	Directory string
+	CleanEnv bool     `default:"true"`
+	Environment []string 
+	UID string
+	GID string
+*/
+	var c exec.Command;
+	args, err := shellquote.Split(A.Exec)
+	if err != nil {
+		fmt.Printf("Exec error: %s", err.Error)
+		return
+	}
+
+	if len(args) == 0 {
+		fmt.Println("Exec error: Empty \"Exec\" value!")
+		return
+	}
+
+	c.UseShell = A.UseShell
+	if A.UseShell {
+		c.Command = A.Exec
+	} else {
+		c.Command = args[0]
+		if len(args) > 1 {
+			c.Args = args[1:]
+		}
+	}
+
+	if A.SendBuffer != "" {
+		switch A.SendBuffer {
+		case "WORD":
+			c.StdIn = []byte(fmt.Sprintf("%v",WORD))
+		case "SENTENCE":
+			c.StdIn = []byte(fmt.Sprintf("%v",SENTENCE))
+		default:
+			c.StdIn = []byte(A.SendBuffer)
+		}
+	}
+	if *VERBOSE || *DEBUG {
+		fmt.Printf("Exec: %v %v\n", c, CTRL_WORD)
+	}
+	r := exec.ExecCommand(&c)
+	fmt.Printf("%v = %v\n", r.StdOut, r.StdErr)
 
 }
 

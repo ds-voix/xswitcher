@@ -30,10 +30,11 @@ const Toml string = `
 
  # Drop all collected keys, including this.  This is default action.
  Drop = ["ESC", "TAB", "ENTER", "KPENTER", "LINEFEED..POWER"]
+
  # Store extra map for these keys, when any is in "down" state.
  # State is checked via "OFF:"|"ON:" conditions in action.
  # (Also, state of these keys must persist between buffer drops.)
- # ??? How to deal with CAPS and "LOCK"-keys ???
+ # ToDo: StateKeys are hardcoded now.
  StateKeys = ["L_CTRL", "L_SHIFT", "L_ALT", "L_META", "CAPS", "N_LOCK", "S_LOCK",
               "R_CTRL", "R_SHIFT", "R_ALT", "R_META"]
 
@@ -80,11 +81,12 @@ const Toml string = `
  # Count only those chars in word which must be removed (by sending the same count of BS keys) while "RetypeWord".
  WordChars = "(^@WORD@:0$)"
  # Drop word buffer and start collecting new one
- # !!! Note that (@WORD@:1) /key-press/ at the ent of regex allows to collect the last char,
+ # !!! Note that (@WORD@:1) /key-press/ at the end of regex allows to collect the last char,
  #     while (@WORD@:0) cuts the WORD strictly at the end of sequence. !!!
  # --- In my layout, R_META selects 5'th layout and R_ALT does "compose". ---
- NewWord = [ "OFF:(CTRL|ALT|META) SEQ:(@SEPARATOR@:[12]),((CAPS:[012])|([LR]_SHIFT:[12])|(R_META:0)|((@WORD@|@SEPARATOR@):0),)*(@WORD@:1)", # "@WORD@:0" then collects the char
+ NewWord = [ "SEQ:(@SEPARATOR@:[12]),(((CAPS:[012])|([LR]_SHIFT:[12])|(R_META:0)|((@WORD@|@SEPARATOR@):0)),)*(@WORD@:1)", # "@WORD@:0" then collects the char
              "SEQ:(@WORD@:2,@WORD@:0)", # Drop repeated char at all: unlikely it needs correction
+             "SEQ:(BACKSPACE:0)", # Drop buffer just afrer BACKSPACE
              # Control sequences. !!! Must be dropped ASAP.
              "SEQ:((([LR]_CTRL|L_ALT|[LR]_META):[12])(,((@WORD@|@SEPARATOR@):[012]))+(,(([LR]_CTRL|L_ALT|[LR]_META):0))+(,@WORD@:1)?)", # "@WORD@:0" then collects the char
              "ON:(WORD) SEQ:(,@WORD@:1)" ] # New input after previous correction. "@WORD@:0" then collects the char
@@ -131,12 +133,12 @@ const Toml string = `
 
 [Action.Hook1] # Run external commands
   Action = [ "Exec" ]
-  Exec = "/path/to/exec -a -b --key_x" # All the input after the 1'st space will be reassembled into the CLI args.
-  Timeout = 1000 # Wait up to 1 second, then kill the executing process.
-  Wait = true # Wait for termination, then output the result to STDOUT|STDERR.
+  Exec = "cat > /tmp/xxx" # All the input after the 1'st space will be reassembled into the CLI args.
+#  Timeout = 1000 # Wait up to 1 second, then kill the executing process.
+#  Wait = true # Wait for termination, then output the result to STDOUT|STDERR.
   # External hook can process collected buffer by it's own means.
   # The last typed word, or sentence, or just the custom string could be passed to stdIn.
-  SendBuffer = "Word" # "WORD"|"SENTENCE"|"any custom input\n"
+  SendBuffer = "WORD" # "WORD"|"SENTENCE"|"any custom input\n"
 
   UseShell = true # Execute inside /bin/bash
   Directory = "/path/to/" # Change the working directory to this one.
