@@ -11,6 +11,9 @@ const Toml string = `
  # In my thinkPads there are such a pseudo-keyboards whith tons of unnecessary events.
  Bypass = "(?i)Video|Camera" # "(?i)" obviously differs from "classic" pcre's.
 
+[Keyboard]
+  Delay = 5 # Delay in the virtual keyboard before sending the next event
+
 [Templates] # "@name@" to simplify expressions
  # Words can consist of these chars (regex) !!! There must be only "canonic" key names, or regex will fail to match !!!
  "WORD" = "([0-9A-Z=-]|GRAVE|APOSTROPHE|SEMICOLON|[LR]_BRACE|COMMA|DOT|(BACK)?SLASH|KP[0-9])"

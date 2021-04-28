@@ -82,6 +82,10 @@ type TScanDevices struct {
 	BypassRE *(regexp.Regexp)
 }
 
+type TKeyboard  struct {
+	Delay int       `default:"5"`
+}
+
 type TActionKeys struct {
 	Layouts []int   `default:"[0,1]"`
 	Add []string
@@ -163,6 +167,7 @@ var (
 
 	// Config
 	ScanDevices TScanDevices
+	Keyboard TKeyboard
 	Templates map [string]string
 	ActionKeys TActionKeys
 	WindowClasses []TWindowClass
@@ -436,6 +441,15 @@ func config() {
 				}
 			default:
 				panic(fmt.Errorf("Config error: [[WindowClasses]] must be a slice of sections, not a single [WindowClasses] section %T", t))
+			}
+
+		case "Keyboard":
+			_Keyboard, err := toml.Marshal(value)
+			if err != nil {
+				panic(fmt.Errorf("Config error: unable to parse [Keyboard]:\n%s", err.Error()))
+			}
+			if err = toml.Unmarshal(_Keyboard, &Keyboard); err != nil {
+				panic(fmt.Errorf("Config error: unable to parse [Keyboard]:\n%s", err.Error()))
 			}
 
 		default:
@@ -766,7 +780,7 @@ func sendKey(key t_key) {
 		kb.Down(key.code)
 		kb.Sync()
 	}
-	time.Sleep(5 * time.Millisecond)
+	time.Sleep(time.Duration(Keyboard.Delay) * time.Millisecond)
 }
 
 // Single key press on virtual keyboard
