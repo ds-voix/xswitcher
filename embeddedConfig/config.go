@@ -144,7 +144,7 @@ const Toml string = `
   SendBuffer = "WORD" # "WORD"|"SENTENCE"|"any custom input\n"
 
   UseShell = true # Execute inside /bin/bash
-  Directory = "/path/to/" # Change the working directory to this one.
+#  Directory = "/path/to/" # Change the working directory to this one.
   CleanEnv = true # Run command inside the clean environment.
   Environment = [ "var=value" ] # A set of environment variables.
 

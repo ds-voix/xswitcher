@@ -59,6 +59,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"os/user"
 	"path/filepath"
 	"regexp"
 //	"sort"
@@ -969,11 +970,53 @@ func Exec(A *TAction) {
 			c.StdIn = []byte(A.SendBuffer)
 		}
 	}
+
+	c.Timeout = float64(A.Timeout)
+	c.No_wait = ! A.Wait
+	c.Set_dir = A.Directory
+
+	if ! A.CleanEnv {
+		c.Set_env = os.Environ()
+	}
+	c.Set_env = append(c.Set_env, A.Environment...)
+
+	// UID & GID
+	user_, err := user.Lookup(A.UID)
+	if err != nil {
+		fmt.Sprintf("Exec: user \"%s\" invalid: %v", A.UID, err)
+		return
+	}
+	u64, err := strconv.ParseUint(user_.Uid, 10, 32)
+	if err != nil {
+		fmt.Sprintf("Exec: non-integer uid! Is it linux?")
+		return
+	}
+	c.UID = uint32(u64)
+
+	gid := user_.Gid
+	if len(A.GID) > 0 {
+		group, err := user.LookupGroup(A.GID)
+		if err != nil {
+			fmt.Sprintf("Exec: group \"%s\" invalid: %v", A.GID, err)
+		}
+		gid = group.Gid
+	}
+	g64, err := strconv.ParseUint(gid, 10, 32)
+	if err != nil {
+		fmt.Sprintf("Exec: non-integer gid! Is it linux?")
+		return
+	}
+	c.GID= uint32(g64)
+
+	
 	if *VERBOSE || *DEBUG {
 		fmt.Printf("Exec: %v %v\n", c, CTRL_WORD)
 	}
 	r := exec.ExecCommand(&c)
-	fmt.Printf("%v = %v\n", r.StdOut, r.StdErr)
+
+	if *VERBOSE || *DEBUG {
+		fmt.Printf("%v = %v\n", string(r.StdOut), string(r.StdErr))
+	}
 
 }
 

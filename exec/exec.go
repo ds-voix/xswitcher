@@ -17,10 +17,10 @@ import (
 type Command struct {
 	id string        // Sequence ID may be set. Othewise, it is auto-generated.
 	no_exec bool
-	uid, gid uint32  // "run_as" linux representation
+	UID, GID uint32  // "run_as" linux representation
 	UseShell bool
-	no_wait bool     // https://golang.org/pkg/os/exec/#Cmd.Start vs "Run()" or m.b. "Wait()"
-	timeout float64
+	No_wait bool     // https://golang.org/pkg/os/exec/#Cmd.Start vs "Run()" or m.b. "Wait()"
+	Timeout float64
 	max_reply int64
 // https://golang.org/pkg/os/exec/#Cmd
 	Set_env []string
@@ -64,9 +64,9 @@ func ExecCommand(c *Command) (*Result) {
 	cmd.Stdin = bytes.NewReader(c.StdIn)
 
 	// https://stackoverflow.com/questions/21705950/running-external-commands-through-os-exec-under-another-user
-	if c.uid > 0 {
+	if c.UID > 0 {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
-		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: c.uid, Gid: c.gid}
+		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: c.UID, Gid: c.GID}
 	}
 	if len(c.Set_dir) > 0 {
 		cmd.Dir = c.Set_dir
@@ -83,7 +83,7 @@ func ExecCommand(c *Command) (*Result) {
 
 	stdout := io.Writer(&_stdout)
 	stderr := io.Writer(&_stderr)
-  	if ! c.no_wait { // Otherwise, just fork process with /dev/null at stdout&stderr.
+  	if ! c.No_wait { // Otherwise, just fork process with /dev/null at stdout&stderr.
 		stdoutIn, _ = cmd.StdoutPipe()
 		stderrIn, _ = cmd.StderrPipe()
 	}
@@ -110,14 +110,15 @@ func ExecCommand(c *Command) (*Result) {
 	}
 //	fmt.Printf("pid = %d\n", cmd.Process.Pid)
 
-	if c.no_wait {
+	if c.No_wait {
+		cmd.Process.Release() // Drop PPID to avoid zombies
 		return r
 	}
 
 	// Wait for the process to finish or kill it after a timeout (whichever happens first):
-	if c.timeout > 0 {
+	if c.Timeout > 0 {
 		go func(cmd *exec.Cmd, pid int) { // !!! panic: runtime error: invalid memory address or nil pointer dereference
-			for i := 0; i < int(c.timeout * 10); i++ {
+			for i := 0; i < int(c.Timeout * 10); i++ {
 				time.Sleep(time.Second / 10)
 				if cmd == nil { return }
 				if cmd.ProcessState != nil {
@@ -134,7 +135,7 @@ func ExecCommand(c *Command) (*Result) {
 				syscall.Kill(-pid, syscall.SIGKILL)
 			}
 		} (cmd, cmd.Process.Pid)
-	} else if c.timeout == 0 { // Wait for interrupt
+	} else if c.Timeout == 0 { // Wait for interrupt
 		go func(cmd *exec.Cmd, pid int) {
 //			defer waitWorkers.Done()
 			for {
