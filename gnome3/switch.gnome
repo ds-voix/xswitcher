@@ -1,0 +1,32 @@
+#!/bin/bash
+
+# Uses "g3kb-switch" to switch between two languages under gnome3.
+
+# apt install build-essential
+# git clone https://github.com/lyokha/g3kb-switch.git
+
+# Then build and install "g3kb-switch",
+# according to instruction at https://github.com/lyokha/g3kb-switch
+
+locale0="us"
+locale1="ru"
+
+export DISPLAY=":0"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/1000/bus"
+
+if [ -z "$1" ]; then
+  locale=$(/usr/local/bin/g3kb-switch -p)
+  if [ "${locale}" = "${locale0}" ]; then
+    /usr/local/bin/g3kb-switch -s ${locale1}
+  else
+    /usr/local/bin/g3kb-switch -s ${locale0}
+  fi
+  exit $?
+fi
+
+if [ "$1" = "0" ]; then
+  /usr/local/bin/g3kb-switch -s ${locale0}
+else
+  /usr/local/bin/g3kb-switch -s ${locale1}
+fi
+exit $?
