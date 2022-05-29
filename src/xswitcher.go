@@ -1274,12 +1274,13 @@ func connectEvents() {
 
 		if skip_it || ScanDevices.BypassRE.MatchString(device.Name) { continue }
 
+		if is_keyboard {
+			fmt.Println("keyboard:", device.Name)
+			go keyboard(device)
+		}
 		if is_mouse {
 			fmt.Println("mouse:", device.Name)
 			go mouse(device)
-		} else if is_keyboard {
-			fmt.Println("keyboard:", device.Name)
-			go keyboard(device)
 		}
 	}
 	return
