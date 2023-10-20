@@ -72,6 +72,7 @@ import (
 	"github.com/gvalkov/golang-evdev"   // Keyboard and mouse events
 	"github.com/micmonay/keybd_event"   // Virtual keyboard !!(must be improved to deal with complex input)
 	"github.com/kballard/go-shellquote" // joining/splitting strings using sh's word-splitting rules
+	"github.com/fsnotify/fsnotify"      // inotify on /dev/input/
 )
 
 // Config
@@ -1303,7 +1304,7 @@ func forkChild() (*os.Process, error) {
 	execDir := filepath.Dir(execName)
 
 	// Spawn child process.
-	p, err := os.StartProcess(execName, []string{execName}, &os.ProcAttr{
+	p, err := os.StartProcess(execName, os.Args, &os.ProcAttr{
 		Dir:   execDir,
 		Env:   os.Environ(),
 		Files: files,
@@ -1397,6 +1398,42 @@ func main() {
 
 	// Attach virtual keyboard
 	kb, err = keybd_event.NewKeyBonding()
+	if err != nil {
+		panic(err)
+	}
+
+	// Create new inotify watcher.
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		panic(err)
+	}
+	defer watcher.Close()
+
+    go func() {
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					fmt.Printf("***WTF***: read(watcher.Events) != ok\n")
+					continue
+				}
+				if event.Has(fsnotify.Create) {
+					fmt.Printf("new file: %s\n", event.Name)
+					time.Sleep(1000 * time.Millisecond)
+					Respawn(nil)
+				}
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					fmt.Printf("***WTF***: read(watcher.Errors) != ok\n")
+					continue
+				}
+				fmt.Printf("watcher error:", err)
+			}
+		}
+	}()
+
+	// inotify on "/dev/input"
+	err = watcher.Add("/dev/input")
 	if err != nil {
 		panic(err)
 	}
