@@ -1223,6 +1223,9 @@ func mouse(device *evdev.InputDevice) {
 		}
 
 		if event.Type == evdev.EV_MSC { // Button events
+			if *DEBUG {
+				fmt.Printf("MOUSE: (%v: %v)\n", event.Code, event.Value)
+			}
 			miceEvents <- t_key{event.Code, event.Value}
 		}
 	}
