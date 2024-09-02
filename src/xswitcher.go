@@ -237,6 +237,8 @@ var (
 	COMPOSE int // Compose counter
 	EXTRA int // Extra keys (to call the Action), must not be retyped.
 	DOWN = make(map[uint16] int) // In any case, all virtual keys MUST BE RELEASED at the end of retyping.
+
+	clipboardOk = false
 )
 
 func config() {
@@ -1355,11 +1357,14 @@ func Respawn(*TAction) { // Completelly respawn xswitcher.
 }
 
 func typeClipboard(A *TAction) { // Try to type the text from clipboard to virtual keyboard.
-	err := clipboard.Init()
-	if err != nil {
-		fmt.Printf("Unable to read from the clipboard: %v.\n", err)
-		return
+	if ! clipboardOk {
+		err := clipboard.Init()
+		if err != nil {
+			fmt.Printf("Unable to read from the clipboard: %v.\n", err)
+			return
+		}
 	}
+	clipboardOk = true
 	b := clipboard.Read(clipboard.FmtText)
 	if b == nil { return }
 
