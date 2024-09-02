@@ -100,6 +100,10 @@ const Toml string = `
  Compose = [ "OFF:(CTRL|L_ALT|META|SHIFT)  SEQ:(R_ALT:1(,R_ALT:2)?(,[LR]_SHIFT:[12])*(,@COMPOSE@:1,@COMPOSE@:0)(,[LR]_SHIFT:0)?(,@COMPOSE@:1,@COMPOSE@:0),R_ALT:0)",
              "OFF:(CTRL|L_ALT|META|SHIFT)  SEQ:(R_ALT:1(,R_ALT:2)?(,[LR]_SHIFT:[12])*,@COMPOSE@:1,@COMPOSE@:0(,[LR]_SHIFT:0)?,R_ALT:0(,[LR]_SHIFT:0)?,@COMPOSE@:1,@COMPOSE@:0)" ]
 
+ # Try to type the text from clipboard to virtual keyboard.
+ # Shift+Shift+L_Ctrl
+# TypeClipboard = [ "OFF:(CTRL|L_ALT|META) SEQ:(L_CTRL:1,L_CTRL:0,[LR]_SHIFT:0,[LR]_SHIFT:0)"]
+
  # !!! Note that xswitcher counts extra keys as the length of matched SEQ:() !!!
  # So, any regex for "RetypeWord" SEQ must be EXACT ONE. Otherwise, xswitcher will generate the troubles for You.
  "Action.RetypeWord" = [ "OFF:(CTRL|ALT|META|SHIFT)  SEQ:(PAUSE:1,PAUSE:0)",

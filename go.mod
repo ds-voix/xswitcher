@@ -2,7 +2,6 @@ module xswitcher
 
 go 1.22.4
 
-
 replace github.com/micmonay/keybd_event => ./src/keybd_event/
 
 require (
@@ -12,6 +11,12 @@ require (
 	github.com/micmonay/keybd_event v1.1.2
 	github.com/pelletier/go-toml v1.9.5
 	github.com/spf13/pflag v1.0.5
+	golang.design/x/clipboard v0.7.0
 )
 
-require golang.org/x/sys v0.4.0 // indirect
+require (
+	golang.org/x/exp v0.0.0-20190731235908-ec7cb31e5a56 // indirect
+	golang.org/x/image v0.6.0 // indirect
+	golang.org/x/mobile v0.0.0-20230301163155-e0f57694e12c // indirect
+	golang.org/x/sys v0.5.0 // indirect
+)

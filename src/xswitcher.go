@@ -55,6 +55,7 @@ import "C"
 import (
 	"xswitcher/embeddedConfig"
 	"xswitcher/exec"
+	"xswitcher/scancodes"
 	flag "github.com/spf13/pflag"       // CLI keys like python's "argparse". More flexible, comparing with "gnuflag"
 	"fmt"
 	"io/ioutil"
@@ -73,6 +74,8 @@ import (
 	"github.com/micmonay/keybd_event"   // Virtual keyboard !!(must be improved to deal with complex input)
 	"github.com/kballard/go-shellquote" // joining/splitting strings using sh's word-splitting rules
 	"github.com/fsnotify/fsnotify"      // inotify on /dev/input/
+	// Deal with clipboard
+	"golang.design/x/clipboard"
 )
 
 // Config
@@ -110,6 +113,7 @@ type TActions struct {
 	NewWord []string
 	NewSentence []string
 	Compose []string
+	TypeClipboard []string
 	Custom map[string][]string // >> TAction.Name
 }
 
@@ -191,6 +195,7 @@ var (
 	NewWord TSequences
 	NewSentence TSequences
 	Compose TSequences
+	TypeClipboard TSequences
 	ActSeq map[string] TSequences
 
 	// Scan-codes processing
@@ -405,6 +410,15 @@ func config() {
 						default:
 							panic(fmt.Errorf("Config error: \"Compose\" value must be array of strings"))
 					}
+					case "TypeClipboard":
+						switch t := v.(type) {
+						case []interface{}:
+							for _, seq := range t {
+								Actions.TypeClipboard = append(Actions.TypeClipboard, seq.(string))
+							}
+						default:
+							panic(fmt.Errorf("Config error: \"TypeClipboard\" value must be array of strings"))
+					}
 					default:
 						if Action.MatchString(k) {
 							switch t := v.(type) {
@@ -554,6 +568,9 @@ func sequences() {
 	}
 	for _, s := range Actions.Compose {
 		Compose = append(Compose, seqParse(s, "Compose"))
+	}
+	for _, s := range Actions.TypeClipboard {
+		TypeClipboard = append(TypeClipboard, seqParse(s, "TypeClipboard"))
 	}
 
 	ActSeq = make(map[string] TSequences)
@@ -1139,6 +1156,13 @@ func doWindowActions() {
 		COMPOSE++
 		return
 	}
+	if testAction(&TypeClipboard) {
+		if *VERBOSE || *DEBUG {
+			fmt.Printf("TypeClipboard: %s\n", TAIL.String()[1:])
+		}
+		typeClipboard(nil)
+		return
+	}
 	if testAction(&NewWord) {
 		if *VERBOSE || *DEBUG {
 			fmt.Printf("NewWord: %s\n", TAIL.String()[1:])
@@ -1330,6 +1354,35 @@ func Respawn(*TAction) { // Completelly respawn xswitcher.
 	os.Exit(0)
 }
 
+func typeClipboard(A *TAction) { // Try to type the text from clipboard to virtual keyboard.
+	err := clipboard.Init()
+	if err != nil {
+		fmt.Printf("Unable to read from the clipboard: %v.\n", err)
+		return
+	}
+	b := clipboard.Read(clipboard.FmtText)
+	if b == nil { return }
+
+//	fmt.Println(scancodes.SequenceForString(string(b)))
+//	return
+	clip := strings.Split(scancodes.SequenceForString(string(b)), " ")
+	for _, cc := range clip {
+//		fmt.Printf("%v\n", cc)
+		c := strings.Split(cc, "+")
+		if len(c) > 1 {
+			sendKey(t_key{uint16(key_def["L_SHIFT"]), 1})
+			sendKey(t_key{uint16(key_def[c[1]]), 1})
+			sendKey(t_key{uint16(key_def[c[1]]), 0})
+			sendKey(t_key{uint16(key_def["L_SHIFT"]), 0})
+		} else {
+			if cc == "Enter" { cc = "ENTER" }
+			if cc == "Space" { cc = "SPACE" }
+			sendKey(t_key{uint16(key_def[cc]), 1})
+			sendKey(t_key{uint16(key_def[cc]), 0})
+		}
+	}
+}
+
 func serve() {
 	var event t_key
 
@@ -1391,6 +1444,7 @@ func main() {
 	ACTIONS["Switch"] = Switch
 	ACTIONS["Layout"] = Layout
 	ACTIONS["Respawn"] = Respawn
+	ACTIONS["TypeClipboard"] = typeClipboard // Try to type the text from clipboard to virtual keyboard
 	ACTIONS["Exec"] = Exec
 
 	config() // Parse config
