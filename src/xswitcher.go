@@ -70,7 +70,9 @@ import (
 	"time"
 //	"unsafe"
 	"github.com/pelletier/go-toml"      // Actual TOML parser
-	"github.com/gvalkov/golang-evdev"   // Keyboard and mouse events
+//	"github.com/gvalkov/golang-evdev"   // Keyboard and mouse events
+	// Refactored to holoplot/go-evdev:
+	"github.com/holoplot/go-evdev"      // Go support for the Linux evdev interface
 	"github.com/micmonay/keybd_event"   // Virtual keyboard !!(must be improved to deal with complex input)
 	"github.com/kballard/go-shellquote" // joining/splitting strings using sh's word-splitting rules
 	"github.com/fsnotify/fsnotify"      // inotify on /dev/input/
@@ -1239,8 +1241,7 @@ func dropKey(event t_key) {
 	return
 }
 
-
-func mouse(device *evdev.InputDevice) {
+func events(device *evdev.InputDevice) {
 	for {
 		event, err := device.ReadOne()
 		if err != nil {
@@ -1248,69 +1249,49 @@ func mouse(device *evdev.InputDevice) {
 			return
 		}
 
-		if event.Type == evdev.EV_MSC { // Button events
-			if *DEBUG {
-				fmt.Printf("MOUSE: (%v: %v)\n", event.Code, event.Value)
-			}
-			miceEvents <- t_key{event.Code, event.Value}
-		}
-	}
-}
-
-
-func keyboard(device *evdev.InputDevice) {
-	for {
-		event, err := device.ReadOne()
-		if err != nil {
-			fmt.Printf("Closing device \"%s\" due to an error:\n\"\"\" %s \"\"\"\n", device.Name, err.Error())
-			return
-		}
-
+//		fmt.Printf("  K type %v, %v = %v\n", evdev.TypeName(event.Type), event.Code, event.Value)
 		if event.Type == evdev.EV_KEY { // Key events
-			keyboardEvents <- t_key{event.Code, event.Value}
+			if (event.Code >= evdev.BTN_LEFT) && (event.Code <= evdev.BTN_TASK) {
+				miceEvents <- t_key{uint16(event.Code), event.Value}
+			} else {
+				if key_name[uint16(event.Code)] != "" {
+					keyboardEvents <- t_key{uint16(event.Code), event.Value}
+				}
+			}
 		}
 	}
 }
 
 func connectEvents() {
-	var (
-		is_mouse bool
-		is_keyboard bool
-		skip_it bool
-	)
-
-	dev, err := evdev.ListInputDevices(ScanDevices.Search)
+	devicePaths, err := evdev.ListDevicePaths()
 	if err != nil {
-		panic(fmt.Sprintf("Events error: Unable to list devices: %s", err.Error()))
+		panic(fmt.Sprintf("Events error: Unable to list devices: %s", err))
+		return
 	}
+	for _, dev := range devicePaths {
+		skip := true
+		d, err := evdev.Open(dev.Path)
+		if err != nil {
+			fmt.Printf("? %s:\t%s\n", dev.Path, dev.Name)
+			fmt.Printf("Cannot read %s: %v\n", dev.Path, err)
+			continue
+		}
+		if ScanDevices.BypassRE.MatchString(dev.Name) {
+			fmt.Printf("- %s:\t%s\n", dev.Path, dev.Name)
+			continue
+		}
 
-	for _, device := range dev {
-		is_mouse = false
-		is_keyboard = false
-		for ev := range device.Capabilities {
-			switch ev.Type {
-			case evdev.EV_ABS, evdev.EV_REL:
-				is_mouse = true
-				continue
-			case evdev.EV_KEY:
-				is_keyboard = true
-				continue
-			case evdev.EV_SYN, evdev.EV_MSC, evdev.EV_SW, evdev.EV_LED, evdev.EV_SND: // EV_SND == "Eee PC WMI hotkeys"
-			default:
-				skip_it = true
-				fmt.Printf("Events warning: Skipping device \"%s\" because it has unsupported event type: %x", device.Name, ev.Type)
+		for _, t := range d.CapableTypes() {
+//			fmt.Printf("  Event type %d (%s)\n", t, evdev.TypeName(t))
+			if t == evdev.EV_KEY {
+				go events(d)
+				skip = false
+				fmt.Printf("  %s:\t%s\n", dev.Path, dev.Name)
+				break
 			}
 		}
-
-		if skip_it || ScanDevices.BypassRE.MatchString(device.Name) { continue }
-
-		if is_keyboard {
-			fmt.Println("keyboard:", device.Name)
-			go keyboard(device)
-		}
-		if is_mouse {
-			fmt.Println("mouse:", device.Name)
-			go mouse(device)
+		if skip {
+			fmt.Printf("x %s:\t%s\n", dev.Path, dev.Name)
 		}
 	}
 	return
