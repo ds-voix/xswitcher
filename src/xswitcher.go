@@ -1242,19 +1242,20 @@ func dropKey(event t_key) {
 }
 
 func events(device *evdev.InputDevice) {
+	name, _ := device.Name()
 	for {
 		event, err := device.ReadOne()
 		if err != nil {
-			fmt.Printf("Closing device \"%s\" due to an error:\n\"\"\" %s \"\"\"\n", device.Name, err.Error())
+			fmt.Printf("Closing device \"%s\" due to an error:\n\"\"\" %s \"\"\"\n", name, err)
 			return
 		}
 
 //		fmt.Printf("  K type %v, %v = %v\n", evdev.TypeName(event.Type), event.Code, event.Value)
 		if event.Type == evdev.EV_KEY { // Key events
-			if (event.Code >= evdev.BTN_LEFT) && (event.Code <= evdev.BTN_TASK) {
+			if (event.Code >= evdev.BTN_LEFT) && (event.Code <= evdev.BTN_TASK) { // Mouse keys
 				miceEvents <- t_key{uint16(event.Code), event.Value}
 			} else {
-				if key_name[uint16(event.Code)] != "" {
+				if key_name[uint16(event.Code)] != "" { // Don't collect unknown input
 					keyboardEvents <- t_key{uint16(event.Code), event.Value}
 				}
 			}
@@ -1262,13 +1263,16 @@ func events(device *evdev.InputDevice) {
 	}
 }
 
-func connectEvents() {
+func connectEvents(connectPath string) {
 	devicePaths, err := evdev.ListDevicePaths()
 	if err != nil {
 		panic(fmt.Sprintf("Events error: Unable to list devices: %s", err))
 		return
 	}
 	for _, dev := range devicePaths {
+		if (connectPath != "") && (dev.Path != connectPath) {
+			continue
+		}
 		skip := true
 		d, err := evdev.Open(dev.Path)
 		if err != nil {
@@ -1437,7 +1441,7 @@ func main() {
 	sequences() // Compile expressions
 	keys() // Initialize key actions
 
-	connectEvents() // Start keyloggers
+	connectEvents("") // Start keyloggers
 
 	// Attach virtual keyboard
 	kb, err = keybd_event.NewKeyBonding()
@@ -1461,9 +1465,9 @@ func main() {
 					continue
 				}
 				if event.Has(fsnotify.Create) {
-					fmt.Printf("new file: %s\n", event.Name)
+					fmt.Printf("New input device: %s\n", event.Name)
 					time.Sleep(1000 * time.Millisecond)
-					Respawn(nil)
+					connectEvents(event.Name)
 				}
 			case err, ok := <-watcher.Errors:
 				if !ok {
