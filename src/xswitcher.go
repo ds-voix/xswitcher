@@ -138,6 +138,15 @@ type TAction struct {
 	GID string
 }
 
+type TWayland struct {
+	BypassX bool      `default:"false"`
+	Layout0 []string
+	Layout1 []string
+	Layout2 []string
+	Layout3 []string
+	Delay int         `default:"50"`
+}
+
 type TSequence struct {
 	OFF * regexp.Regexp
 	ON * regexp.Regexp
@@ -183,6 +192,9 @@ var (
 	WindowClasses []TWindowClass
 	Actions TActions
 	ActionSet map[string] TAction
+	Wayland TWayland
+
+	LANG = 0
 
 	// Parse by regex
 	ON *(regexp.Regexp) = regexp.MustCompile("(\\s|^)ON:\\([^\\s]+\\)") // "ON:(CTRL|ALT|META)"
@@ -305,6 +317,7 @@ func config() {
 			if ScanDevices.BypassRE, err = regexp.Compile(ScanDevices.Bypass); err != nil {
 				panic(fmt.Errorf("Config error: unable to parse [ScanDevices]. Invalid regexp for \"Bypass\".\n%s", err.Error()))
 			}
+
 		case "Templates":
 			switch t := value.(type) {
 			case map[string]interface{}:
@@ -474,6 +487,15 @@ func config() {
 			}
 			if err = toml.Unmarshal(_Keyboard, &Keyboard); err != nil {
 				panic(fmt.Errorf("Config error: unable to parse [Keyboard]:\n%s", err.Error()))
+			}
+
+		case "Wayland":
+			_Wayland, err := toml.Marshal(value)
+			if err != nil {
+				panic(fmt.Errorf("Config error: unable to parse [Wayland]:\n%s", err.Error()))
+			}
+			if err = toml.Unmarshal(_Wayland, &Wayland); err != nil {
+				panic(fmt.Errorf("Config error: unable to parse [Wayland]:\n%s", err.Error()))
 			}
 
 		default:
@@ -726,6 +748,10 @@ func dropBuffers() {
 	CTRL_WORD = copyCTRL(CTRL)
 	CTRL_SENTENCE = copyCTRL(CTRL)
 	COMPOSE = 0
+
+	if *VERBOSE {
+		fmt.Printf("dropBuffers()\n")
+	}
 }
 
 func newWord() {
@@ -781,6 +807,30 @@ func getXModifiers() uint32 {
 
 // Check language if (lang < 0), set language if (lang >= 0)
 func Language(lang int) (int) {
+	if Wayland.BypassX { // The crunch for KDE@Wayland
+		if lang >= 0 {
+			if LANG != lang {
+				CTRL["WORD"] = true
+				switch lang {
+				case 0:
+					sendKeySequence(Wayland.Layout0)
+				case 1:
+					sendKeySequence(Wayland.Layout1)
+				case 2:
+					sendKeySequence(Wayland.Layout2)
+				case 3:
+					sendKeySequence(Wayland.Layout3)
+				}
+				time.Sleep(time.Duration(Wayland.Delay) * time.Millisecond)
+			}
+			LANG = lang
+		}
+		if *VERBOSE {
+			fmt.Printf("Language(Wayland): %v >> %v\n", lang, LANG)
+		}
+		return LANG
+	}
+
 	state := new(C.struct__XkbStateRec)
 	layout := C.uint(0)
 
@@ -819,10 +869,30 @@ func pressKey(key int) {
 	sendKey(t_key{uint16(key), 0})
 }
 
+func sendKeySequence(keys []string) {
+	if *VERBOSE {
+		fmt.Printf("sendKeySequence: %v\n", keys)
+	}
+	for i := 0; i < len(keys); i++ {
+		c := strings.Split(keys[i], ":")
+		if len(c) > 1 {
+			state, err := strconv.Atoi(c[1])
+			if err != nil {
+				continue
+			}
+			if (state < 0) || (state > 2) {
+				continue
+			}
+			sendKey(t_key{uint16(key_def[c[0]]), int32(state)})
+		}
+	}
+
+}
+
 // ACTIONS (RetypeWord, Switch, Layout, Respawn, Exec)
 func RetypeWord(A *TAction) {
 	if (len(WORD) - EXTRA) < 1 { // WTF?!
-		fmt.Println("RetypeWord error: WORD is smaller than EXTRA!", EXTRA)
+		fmt.Printf("RetypeWord error: WORD(%v) is smaller than EXTRA(%v)!\n", len(WORD), EXTRA)
 		newWord()
 		return
 	}
@@ -857,6 +927,9 @@ func RetypeWord(A *TAction) {
 	}
 
 	// Clean the word
+	if *VERBOSE {
+		fmt.Printf("BACKSPACE: %v - %v = %v\n", count, COMPOSE, count - COMPOSE)
+	}
 	for i := 0; i < count - COMPOSE; i++ {
 		pressKey(evdev.KEY_BACKSPACE)
 	}
@@ -881,7 +954,7 @@ func RetypeWord(A *TAction) {
 	RETYPE := len(WORD) - EXTRA
 
 	if *VERBOSE {
-		fmt.Printf("RETYPE: %v", CTRL_WORD) // Helpfull to debug e.g. keyboard bounce
+		fmt.Printf("RETYPE: %v >> %v", RETYPE, CTRL_WORD) // Helpfull to debug e.g. keyboard bounce
 		// "RETYPE: {17 1}{16 0}{17 0} :DONE" >> Oh, shi!
 	}
 

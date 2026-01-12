@@ -84,10 +84,25 @@ and install xswitcher executable under "/usr/local/bin/" or where You prefer.
 
 Make it executable, e.g. "chmod +xs /usr/local/bin/xswitcher", configure the autostart inside Your X GUI and enjoy.
 
-## Wayland
-To deal with wayland-based GUI, (at least) there must be some driver to provide "/dev/input" character devices.  
-I don't plan to write something for wayland, and also don't know any ready-made solution.  
-So, feel free to do this job. In case of such a driver appears, I of course will adapt (or help to adapt) xswitcher.
+## KDE@Wayland: shit happens
+Wayland cancels all the X groundwork for multi-language systems.
+While Gnome forces it's own dbus-based API, KDE does nothing at all.
+X-layer is just a stub built into the current KDE environment. It doesn't contain any real data.
+So, the only common things are now the kernel-based "/dev/input" and virtual keyboard.
+Window classes are gone together with the language API.
+
+I wrote the "[Wayland]" crutch. It selects language via keyboard shortcuts.
+For example, one can configure "Win+1" to select language #0 and "Win+2" to select language #1.
+Then, in "xswitcher.conf":
+
+    [Wayland]
+     BypassX = true # Switch layouts via pre-configured keyboard shortcuts
+     Layout0 = ["L_META:1", "1:1", "1:0", "L_META:0"] # Win+1
+     Layout1 = ["L_META:1", "2:1", "2:0", "L_META:0"] # Win+2
+     Delay = 50
+
+* It takes about 50 ms to complete switching the keyboard layout in my KDE, so I set 50 as the default value.
+* Up to 4 language shortcuts "Layout0"…"Layout3".
 
 ## Packaging
 I don't have enough time to maintain any distro package (rpm, dpkg, etc.).  
