@@ -2,7 +2,8 @@
 # End-to-end stand: real evdev source device -> xswitcher -> its own uinput keyboard.
 # Phases 5-11 check the Wayland branch (the shipped config replays shortcuts, BypassX=true) on
 # the emitted EV_KEY stream; phase 12 checks the X11 branch (XkbLockGroup) on the live server;
-# phase 13 checks that re-creating an already attached device node cannot start a second reader.
+# phase 13 checks that re-creating an already attached device node cannot start a second reader;
+# phase 14 checks that a device the scan skips does not keep its descriptor open.
 # Requires: docker run --privileged, uinput module loaded on the host kernel.
 set -u
 cd /w
@@ -15,8 +16,8 @@ TOTAL=0
 # "ALL GREEN" is only meaningful together with the number of checks behind it: a phase
 # that aborts early (or gets commented out while debugging) must not look like a pass.
 # Keep this in sync with the number of check() calls below
-# (14 lifecycle/stream + 3 SEQ tail + 13 X11 branch + 6 single-reader).
-EXPECT=36
+# (14 lifecycle/stream + 3 SEQ tail + 13 X11 branch + 6 single-reader + 1 descriptor).
+EXPECT=37
 
 say() { printf '%-46s %s\n' "$1" "${2:-}"; }
 check() { # check <name> <0|1>
@@ -336,6 +337,77 @@ check "D6 a device that reappears is attached and switches" "$A10"
 [ "$A10" != "0" ] && { echo "  --- reappearing-device analysis ---"; tail -12 /tmp/a10.log | sed 's/^/  /'; }
 kill $SPID2 2>/dev/null
 kill $DUPPID 2>/dev/null
+
+echo "--- 14. a bypassed device leaves no descriptor behind ---"
+# connectEvents() opens every node it inspects and only the devices it starts a reader for keep
+# that descriptor: the BypassRE branch and the "no EV_KEY capability" branch used to hand nothing
+# back. With the collector running the os.File finalizer hides this (measured: both skipped
+# devices were gone from /proc/<pid>/fd a second later), so the daemon runs with GOGC=off here and
+# every unclosed fd stays visible. Measured before the fix: 4 event fds held, 3 of them the
+# bypassed cameras; with the explicit Close, 1 (the attached source).
+python3 stand/source_key.py hold >/tmp/source3.log 2>&1 &
+SPID3=$!
+SRC3=""
+for i in $(seq 20); do
+    bash stand/mknod-input.sh >>/tmp/mknod.log 2>&1
+    SRC3=$(source_path 2>/dev/null)
+    [ -n "$SRC3" ] && break
+    sleep 0.5
+done
+[ -n "$SRC3" ] || { echo "FATAL: phase 14 has no source device"; tail -5 /tmp/source3.log; exit 9; }
+python3 - >/tmp/cams.log 2>&1 <<'PY' &
+import time
+from evdev import UInput, ecodes as e
+uis = [UInput({e.EV_KEY: [e.KEY_A, e.KEY_B]}, name="Integrated Camera %d" % i, bustype=e.BUS_USB)
+       for i in range(3)]
+print("cameras ready: %d" % len(uis), flush=True)
+while True:
+    time.sleep(1)
+PY
+CAMPID=$!
+CAMS=0
+for i in $(seq 20); do
+    bash stand/mknod-input.sh >>/tmp/mknod.log 2>&1
+    CAMS=$(python3 - <<'PY'
+import evdev
+n = 0
+for p in evdev.list_devices():
+    try:
+        d = evdev.InputDevice(p)
+    except Exception:
+        continue
+    if "Camera" in d.name:
+        n += 1
+print(n)
+PY
+)
+    [ "$CAMS" = "3" ] && break
+    sleep 0.5
+done
+echo "  camera nodes visible: $CAMS of 3, source: $SRC3"
+cp "$CONF" /tmp/fd.conf
+sed -i "/^\[ScanDevices\]/,/^\[/ s|^\s*Test *=.*|Test = \"$SRC3\"|" /tmp/fd.conf
+# The shipped Respawn = -1 is what makes this phase possible: serve() schedules a self-respawn
+# when the Test node is younger than that window, and here the node was just made by hand. A fork
+# would replace the very process whose /proc entries are being counted, so the config keeps -1
+# (appending a second Respawn key is a TOML parse error and the daemon simply refuses to start --
+# measured on the first run of this phase).
+grep -nE "Respawn|Test =|Bypass =" /tmp/fd.conf | head -4 | sed 's/^/  /'
+GOGC=off /tmp/xswitcher -v -c /tmp/fd.conf >/tmp/fd.log 2>&1 &
+FDPID=$!
+for i in $(seq 40); do
+    HITS=$(grep -cE "^- /dev/input/event[0-9]+:[[:space:]]+Integrated Camera" /tmp/fd.log)
+    [ "${HITS:-0}" = "3" ] && break
+    sleep 0.5
+done
+[ -d "/proc/$FDPID" ] || { echo "FATAL: the GOGC=off daemon of phase 14 is gone"; head -5 /tmp/fd.log | sed 's/^/  /'; exit 9; }
+sleep 1
+HELD=$(ls -l /proc/$FDPID/fd 2>/dev/null | grep -oE "/dev/input/event[0-9]+" | sort -u | wc -l)
+echo "  bypassed devices in the log: ${HITS:-0} of 3, event descriptors held: $HELD"
+[ "$HELD" = "1" ]; check "F1 a bypassed device is closed again (held=$HELD, source only)" "$?"
+[ "$HELD" != "1" ] && ls -l /proc/$FDPID/fd 2>/dev/null |
+    grep -oE "/dev/input/event[0-9]+" | sort | uniq -c | sed 's/^/  /'
+kill $FDPID $CAMPID $SPID3 2>/dev/null
 
 echo "--- detail ---"
 [ "$SELF_ATTACHED" = "0" ] && echo "  P1-4 reproduced: xswitcher reads its own virtual keyboard:" && grep -En "^  .*keybd interface" "$LOG" | head -4

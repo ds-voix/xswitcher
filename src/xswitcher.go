@@ -1480,6 +1480,10 @@ func connectEvents(connectPath string) {
 			continue
 		}
 		if ScanDevices.BypassRE.MatchString(dev.Name) {
+			// The descriptor was opened above and no reader takes it over, so close it here.
+			// Left to itself it stays open until the garbage collector finalizes d: measured
+			// with GOGC=off, three bypassed devices meant three held fds.
+			_ = d.Close()
 			fmt.Printf("- %s:\t%s\n", dev.Path, dev.Name)
 			continue
 		}
@@ -1498,7 +1502,8 @@ func connectEvents(connectPath string) {
 				break
 			}
 		}
-		if skip {
+		if skip { // no EV_KEY capability: the reader never took d, so this is ours to close
+			_ = d.Close()
 			fmt.Printf("x %s:\t%s\n", dev.Path, dev.Name)
 		}
 	}
