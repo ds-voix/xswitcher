@@ -14,7 +14,8 @@ FAILED=0
 TOTAL=0
 # "ALL GREEN" is only meaningful together with the number of checks behind it: a phase
 # that aborts early (or gets commented out while debugging) must not look like a pass.
-# Keep this in sync with the number of check() calls below (14 lifecycle/stream + 3 SEQ).
+# Keep this in sync with the number of check() calls below
+# (14 lifecycle/stream + 3 SEQ tail).
 EXPECT=17
 
 say() { printf '%-46s %s\n' "$1" "${2:-}"; }
@@ -36,9 +37,14 @@ setxkbmap -layout us >/dev/null 2>&1
 
 echo "--- 3. source keyboard ---"
 python3 stand/source_key.py hold >/tmp/source.log 2>&1 &
-sleep 1.5
-bash stand/mknod-input.sh >>/tmp/mknod.log 2>&1
-SRC=$(python3 - <<'PY'
+# The node evdev creates for the uinput device appears asynchronously, and --privileged does
+# not add devices created after the container started, so mknod has to be retried until
+# /sys/class/input shows it. Measured: with uinput and evdev both loaded and /dev/uinput
+# present, one fixed 1.5 s sleep let the stand abort here (stand-run-15.log).
+SRC=""
+for i in $(seq 20); do
+    bash stand/mknod-input.sh >>/tmp/mknod.log 2>&1
+    SRC=$(python3 - <<'PY'
 import evdev
 for p in evdev.list_devices():
     d = evdev.InputDevice(p)
@@ -46,7 +52,10 @@ for p in evdev.list_devices():
         print(d.path); break
 PY
 )
-[ -n "${SRC:-}" ] || { echo "FATAL: no /dev/input/event* for the source device -- the host kernel is missing evdev/uinput; run stand/setup-host.sh"; cat /tmp/mknod.log; exit 9; }
+    [ -n "$SRC" ] && break
+    sleep 0.5
+done
+[ -n "${SRC:-}" ] || { echo "FATAL: no /dev/input/event* for the source device after 10s -- the host kernel is missing evdev/uinput; run stand/setup-host.sh"; tail -20 /tmp/mknod.log; exit 9; }
 echo "source device: $SRC"
 
 echo "--- 4. config + build ---"
