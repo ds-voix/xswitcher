@@ -1,0 +1,4 @@
+# The stand runs inside a Linux container: bash and python choke on CRLF.
+stand/*.sh text eol=lf
+stand/*.py text eol=lf
+stand/Dockerfile text eol=lf
