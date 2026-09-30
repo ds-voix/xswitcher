@@ -687,18 +687,21 @@ func keys() {
 func getActiveWindowId() (idChanged bool) { // _Ctype_Window == uint32
 	idChanged = true
 	ActiveWindowId_old := ActiveWindowId
-	if C.XGetInputFocus(display, &ActiveWindowId, &revert_to) == 0 {
-		ActiveWindowId = 0
-		fmt.Println("ActiveWindowId = 0", C.XGetInputFocus(display, &ActiveWindowId, &revert_to))
+	focused := ActiveWindowId // Keep the previous value unless X names a real window
+	if C.XGetInputFocus(display, &focused, &revert_to) == 0 {
+		if *VERBOSE {
+			fmt.Println("XGetInputFocus failed")
+		}
+		return false
 	}
+	if focused <= 1 { // None or PointerRoot
+		// X goes through this state on every focus switch, and a key pressed while it
+		// lasts is still the same user's word: dropping the buffers here wipes it.
+		return false
+	}
+	ActiveWindowId = focused
 
 	if ActiveWindowId == ActiveWindowId_old { return false}
-
-	if ActiveWindowId <= 1 {
-		ActiveWindowClass = ""
-		fmt.Println("ActiveWindowId <= 1")
-		return
-	}
 
 	// !!! "X Error of failed request:  BadWindow (invalid Window parameter)" in case of window was gone.
 	// https://eli.thegreenplace.net/2019/passing-callbacks-and-pointers-to-cgo/
@@ -1291,6 +1294,10 @@ func checkAppend(event t_key, slice ...*t_keys) {
 	if getActiveWindowId() { // New focused window detected
 		// Drop buffers, but store this event
 		dropBuffers()
+		setWindowActions()
+	} else if WC == nil {
+		// X named no window yet (None/PointerRoot, or no WM at all): without an action set
+		// the daemon has nothing to run and the keyboard stays silently unswitched.
 		setWindowActions()
 	}
 
