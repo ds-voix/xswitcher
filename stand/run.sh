@@ -92,12 +92,46 @@ grep -Eq "^  /dev/input/event[0-9]+:\s*keybd interface" "$LOG"; SELF_ATTACHED=$?
 
 echo "--- 8. assertions: emitted key stream ---"
 [ -s "$TSV" ] || { say "TSV empty -- sniffer log:"; tail -3 /tmp/sniff.log | sed 's/^/  /'; FAILED=1; }
-python3 stand/analyze.py "$TSV"; check "E-series key-stream checks" "$?"
+python3 stand/analyze.py "$TSV" "H,E,L,L,O" 2; check "E-series key-stream checks" "$?"
+
+echo "--- 9. focus blip in the middle of a word (P1-3) ---"
+gcc stand/mkwin.c -o /tmp/mkwin -lX11 >/tmp/mkwin_build.log 2>&1; MKWIN_BUILD=$?
+[ "$MKWIN_BUILD" = "0" ] || { echo "FATAL: mkwin build"; head -20 /tmp/mkwin_build.log; exit 9; }
+TSV2=/tmp/keybd2.tsv
+python3 stand/sniff.py "keybd interface" "$TSV2" 25 >/tmp/sniff2.log 2>&1 &
+sleep 1
+/tmp/mkwin >/tmp/mkwin.log 2>&1 &
+MW=$!
+sleep 0.8                       # the editor takes focus: one legitimate buffer drop
+python3 stand/source_key.py play "$SRC" "W,O"
+sleep 0.2
+kill -HUP $MW                   # X answers None/PointerRoot, as during a real window switch
+sleep 0.2
+python3 stand/source_key.py play "$SRC" "R"   # a key pressed exactly while X has no focus
+sleep 0.2
+kill -USR2 $MW                  # ... and the very same window is focused again
+sleep 0.2
+python3 stand/source_key.py play "$SRC" "D,PAUSE"
+sleep 3
+grep -q "RetypeWord error" "$LOG"; WORD_DROPPED=$?
+[ "$WORD_DROPPED" != "0" ]; check "A9 no RetypeWord error after a focus blip" "$?"
+[ -s "$TSV2" ] || { say "TSV2 empty -- sniffer log:"; tail -3 /tmp/sniff2.log | sed 's/^/  /'; FAILED=1; }
+python3 stand/analyze.py "$TSV2" "W,O,R,D" 1; check "E-series checks (word survived the blip)" "$?"
+echo "  focus log:"; sed 's/^/    /' /tmp/mkwin.log
+
+echo "--- 10. lone L_CTRL tap cycles the layout ---"
+TSV3=/tmp/keybd3.tsv
+python3 stand/sniff.py "keybd interface" "$TSV3" 15 >/tmp/sniff3.log 2>&1 &
+sleep 1
+python3 stand/source_key.py play "$SRC" "LEFTCTRL"
+sleep 2
+python3 stand/analyze.py "$TSV3" "" 2; check "E-series checks (switch only, no wipe)" "$?"
 
 echo "--- detail ---"
 [ "$SELF_ATTACHED" = "0" ] && echo "  P1-4 reproduced: xswitcher reads its own virtual keyboard:" && grep -En "^  .*keybd interface" "$LOG" | head -4
 echo "  devices seen:"; grep -E "^\s+[-x]? */dev/input" "$LOG" | head -8
 echo "  retype tail:"; grep -E "RETYPE|BACKSPACE|Language" "$LOG" | tail -6
+[ -n "${DUMPLOG:-}" ] && { echo "--- full daemon log ---"; cat "$LOG" | sed 's/^/  /'; }
 
 kill $XPID 2>/dev/null
 echo "=================================="

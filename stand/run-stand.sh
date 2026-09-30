@@ -11,6 +11,7 @@ bash "$HERE/setup-host.sh" || { echo "host modules unavailable"; exit 9; }
 mkdir -p "$REPO/.gomodcache"
 
 MSYS_NO_PATHCONV=1 "$DOCKER" run --rm --privileged \
+    -e DUMPLOG="${DUMPLOG:-}" \
     -v "$WS:/w" \
     -v "$WS/.gomodcache:/root/go/pkg/mod" \
     xswitcher-stand bash /w/stand/run.sh
