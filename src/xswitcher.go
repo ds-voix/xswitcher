@@ -504,6 +504,36 @@ func config() {
 			panic(fmt.Errorf("Config error: Action definition not found for \"Action.%s\"", key))
 		}
 	}
+	checkActionCycles()
+}
+
+// doAction() expands "Action.xxx" references recursively and has no depth limit, so a
+// chain that leads back to itself runs until the process dies of a stack overflow -- on
+// the first keystroke matching the rule, far away from the config line that caused it.
+// Reject such a config while parsing it.
+func checkActionCycles() {
+	const (visiting = 1; checked = 2)
+	state := make(map[string]int, len(ActionSet))
+	var walk func(name, chain string) // chain: the path from the root, ending with name
+	walk = func(name, chain string) {
+		switch state[name] {
+		case checked:
+			return // Already proved acyclic: a diamond is not a cycle
+		case visiting:
+			panic(fmt.Errorf("Config error: \"Action.%s\" refers to itself: %s", name, chain))
+		}
+		state[name] = visiting
+		for _, act := range ActionSet[name].Action {
+			if Action.MatchString(act) { // "Action.xxx" >> the same recursion doAction() does
+				ref := strings.TrimLeft(ActionName.FindString(act), ".")
+				walk(ref, chain+" -> "+ref)
+			}
+		}
+		state[name] = checked
+	}
+	for name := range ActionSet {
+		walk(name, name)
+	}
 }
 
 // Substitute templates "@xxx@"
