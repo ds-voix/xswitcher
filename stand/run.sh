@@ -16,8 +16,8 @@ TOTAL=0
 # "ALL GREEN" is only meaningful together with the number of checks behind it: a phase
 # that aborts early (or gets commented out while debugging) must not look like a pass.
 # Keep this in sync with the number of check() calls below
-# (14 lifecycle/stream + 3 SEQ tail + 13 X11 branch + 6 single-reader + 1 descriptor).
-EXPECT=37
+# (14 lifecycle/stream + 3 SEQ tail + 14 X11 branch + 6 single-reader + 1 descriptor).
+EXPECT=38
 
 say() { printf '%-46s %s\n' "$1" "${2:-}"; }
 check() { # check <name> <0|1>
@@ -245,6 +245,28 @@ sleep 1
 python3 stand/source_key.py play "$SRC" "H,I,PAUSE"
 sleep 3
 python3 stand/analyze.py "$TSV6" "H,I" none; check "X12 managed group works again after the gate" "$?"
+
+# X13: the checkLanguageId gate must not merely skip the unmanaged group, it has to drop the
+# buffers too. A WORD typed on a managed group and left unretyped (no trigger yet) is stale by the
+# time the user comes back from an unmanaged group: the app already holds those chars, and the
+# letters typed during the unmanaged sojourn were never tracked. Firing the switch trigger after
+# the return would retype that stale WORD and duplicate it. With the gate dropping buffers, the
+# return triggers an empty retype -- nothing is emitted. Negative control: revert the gate and the
+# stale "GAP" is backspaced and retyped, so this sniffer stops being empty.
+/tmp/xgroup set 0 >/dev/null 2>&1                      # a known managed start
+python3 stand/source_key.py play "$SRC" "ENTER"        # Drop: begin from an empty buffer
+sleep 0.5
+python3 stand/source_key.py play "$SRC" "G,A,P"        # accumulate a WORD, no trigger yet
+TSV11=/tmp/keybd11.tsv
+python3 stand/sniff.py "keybd interface" "$TSV11" 15 >/tmp/sniff11.log 2>&1 &
+sleep 1
+/tmp/xgroup set 2 >/dev/null 2>&1                      # external jump to the unmanaged group
+python3 stand/source_key.py play "$SRC" "W"            # gate hit while GAP is still pending
+sleep 0.5
+/tmp/xgroup set 0 >/dev/null 2>&1                      # back to a managed group
+python3 stand/source_key.py play "$SRC" "PAUSE"        # RetypeWord trigger on an (expected) empty buffer
+sleep 3
+[ ! -s "$TSV11" ]; check "X13 stale word dropped by the unmanaged gate" "$?"
 [ -s /tmp/x11.log ] && { echo "  x11 branch output:"; grep -E "Language|RETYPE|BACKSPACE" /tmp/x11.log | tail -6 | sed 's/^/    /'; }
 kill $X11PID 2>/dev/null
 

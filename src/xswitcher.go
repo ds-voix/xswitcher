@@ -1389,7 +1389,12 @@ func checkAppend(event t_key, slice ...*t_keys) {
 	}
 	getXModifiers() // X can lag while setting NUMLOCK state (and m.b. CAPSLOCK too), so check it after each key event
 
-	if ! checkLanguageId() { return } // Don't proceed with extra languages
+	if ! checkLanguageId() { // An unmanaged group (a layout outside the global [ActionKeys] Layouts):
+		// drop the buffers, so switching back cannot retype a WORD left over from the last managed
+		// group. dropBuffers() is idempotent, so calling it on every event while unmanaged is safe.
+		dropBuffers()
+		return
+	}
 
 
 	if getActiveWindowId() { // New focused window detected
