@@ -1,10 +1,11 @@
 #!/usr/bin/python3
 """Verify the EV_KEY stream xswitcher emits on its own virtual keyboard.
 
-usage: analyze.py <tsv> <word-csv> <shortcut-digit>
+usage: analyze.py <tsv> <word-csv> <shortcut-digit|none>
   <tsv>              rows: time<TAB>code<TAB>value, as written by sniff.py
   <word-csv>         the word that was typed, e.g. "H,E,L,L,O"; "" for no word
-  <shortcut-digit>   which [Wayland] Layout<N> shortcut is expected
+  <shortcut-digit>   which [Wayland] Layout<N> shortcut is expected, or "none" when the
+                     daemon switches layouts through XkbLockGroup instead of a shortcut
 
 The expectations are derived from the word, so the same file checks every phase of
 the stand: BackSpace count == word length, then the word replayed down/up.
@@ -24,9 +25,10 @@ with open(sys.argv[1]) as fh:
         events.append((float(t), int(code), int(value)))
 
 word = [t for t in (sys.argv[2].split(",") if len(sys.argv) > 2 and sys.argv[2] else []) if t]
-digit = getattr(e, "KEY_%s" % sys.argv[3]) if len(sys.argv) > 3 else e.KEY_2
+via_x = len(sys.argv) > 3 and sys.argv[3] == "none"
+digit = None if via_x else getattr(e, "KEY_%s" % sys.argv[3])
 
-SHORTCUT = [(META, 1), (digit, 1), (digit, 0), (META, 0)]
+SHORTCUT = [] if via_x else [(META, 1), (digit, 1), (digit, 0), (META, 0)]
 RETYPE = [(getattr(e, "KEY_%s" % k), v) for k in word for v in (1, 0)]
 
 
@@ -62,11 +64,15 @@ if word:
     check("E1 emitted stream is not empty", len(events) > 0, "%d events" % len(events))
     check("E3 %d BackSpace presses for '%s'" % (len(word), "".join(word)), bs_downs == len(word),
           "got %d" % bs_downs)
-    sc_end = find(SHORTCUT)
-    check("E4 Win+%s layout shortcut emitted" % sys.argv[3], sc_end >= 0)
-    bs_first = next((i for i, ev in enumerate(events) if ev[1] == BACKSPACE), -1)
-    check("E5 shortcut precedes the BackSpaces", sc_end >= 0 and bs_first > sc_end,
-          "shortcut@%d bs@%d" % (sc_end, bs_first))
+    if via_x:
+        # The X11 branch changes the layout inside the X server, so no shortcut keys appear.
+        check("E4 no layout shortcut emitted (XkbLockGroup path)", META not in streams)
+    else:
+        sc_end = find(SHORTCUT)
+        check("E4 Win+%s layout shortcut emitted" % sys.argv[3], sc_end >= 0)
+        bs_first = next((i for i, ev in enumerate(events) if ev[1] == BACKSPACE), -1)
+        check("E5 shortcut precedes the BackSpaces", sc_end >= 0 and bs_first > sc_end,
+              "shortcut@%d bs@%d" % (sc_end, bs_first))
     last_bs = max((i for i, ev in enumerate(events) if ev[1] == BACKSPACE), default=-1)
     check("E6 word '%s' retyped after the wipe" % "".join(word), find(RETYPE, last_bs + 1) >= 0)
 else:
