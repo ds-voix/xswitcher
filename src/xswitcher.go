@@ -63,7 +63,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
-//	"sort"
+	"sort"
 	"strings"
 	"strconv"
 	"syscall"
@@ -531,7 +531,14 @@ func checkActionCycles() {
 		}
 		state[name] = checked
 	}
+	// Go randomizes map iteration and walk() reports a cycle as the path from whichever
+	// root reached it first, so the same config got "A -> B -> C -> A" or "C -> A -> B -> C".
+	names := make([]string, 0, len(ActionSet))
 	for name := range ActionSet {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
 		walk(name, name)
 	}
 }

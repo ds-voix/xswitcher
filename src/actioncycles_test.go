@@ -59,6 +59,31 @@ func TestCheckActionCyclesRejectsMutualReference(t *testing.T) {
 	}
 }
 
+// The path above is only a contract if it is stable. checkActionCycles() used to start its
+// depth-first walk from an arbitrary section, because Go randomizes map iteration, so the
+// same 3-cycle was reported in one of three rotations and the assertion could not decide
+// what the daemon prints. Repetitions are what a single run cannot show.
+func TestCheckActionCyclesReportsTheSamePathEveryRun(t *testing.T) {
+	old := ActionSet
+	defer func() { ActionSet = old }()
+	ActionSet = actionSets(map[string][]string{
+		"A": {"Action.B"},
+		"B": {"Action.C"},
+		"C": {"Action.A"},
+	})
+
+	const attempts = 20 // 20 random rotations all matching is p ~ 3e-10
+	first := ""
+	for i := 0; i < attempts; i++ {
+		msg := recoverMessage(checkActionCycles)
+		if first == "" {
+			first = msg
+		} else if msg != first {
+			t.Fatalf("run %d reported %q, run 0 reported %q", i, msg, first)
+		}
+	}
+}
+
 // A chain, a diamond and the shape the shipped config actually uses must all pass:
 // "RetypeWord" here is a leaf action function, not a section reference, and must not be
 // mistaken for one just because it is mentioned by name.
