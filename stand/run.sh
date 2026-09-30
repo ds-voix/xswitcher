@@ -14,7 +14,8 @@ FAILED=0
 TOTAL=0
 # "ALL GREEN" is only meaningful together with the number of checks behind it: a phase
 # that aborts early (or gets commented out while debugging) must not look like a pass.
-EXPECT=14
+# Keep this in sync with the number of check() calls below (14 lifecycle/stream + 3 SEQ).
+EXPECT=17
 
 say() { printf '%-46s %s\n' "$1" "${2:-}"; }
 check() { # check <name> <0|1>
@@ -131,6 +132,24 @@ sleep 1
 python3 stand/source_key.py play "$SRC" "LEFTCTRL"
 sleep 2
 python3 stand/analyze.py "$TSV3" "" 2; check "E-series checks (switch only, no wipe)" "$?"
+
+echo "--- 11. a variable-length SEQ tail is reported while parsing (P1-5) ---"
+# RetypeWord() derives EXTRA from the length of the matched tail, so ".*PAUSE:1,PAUSE:0"
+# matched the whole SeqLength window, EXTRA grew to 12 and the action refused to wipe or
+# retype anything: the layout switched and the word stayed in the wrong one. Say it at the
+# start, and keep silent about the shipped rules, which are exact.
+kill $XPID 2>/dev/null
+sleep 0.5
+grep -q 'Parse warning:.*RetypeWord' "$LOG"; SHIPPED_WARN=$?
+[ "$SHIPPED_WARN" != "0" ]; check "A10 shipped config prints no SEQ warning" "$?"
+sed 's/SEQ:(PAUSE:1,PAUSE:0)/SEQ:(.*PAUSE:1,PAUSE:0)/' "$CONF" > /tmp/quant.conf
+grep -q 'SEQ:(\.\*PAUSE' /tmp/quant.conf; check "A11 mutated config really differs" "$?"
+/tmp/xswitcher -v -c /tmp/quant.conf >/tmp/quant.log 2>&1 &
+QPID=$!
+sleep 2
+grep -q 'Parse warning:.*RetypeWord' /tmp/quant.log; check "A12 variable-length SEQ tail reported" "$?"
+[ -s /tmp/quant.log ] || { echo "  --- mutated config output ---"; head -20 /tmp/quant.log | sed 's/^/  /'; }
+kill $QPID 2>/dev/null
 
 echo "--- detail ---"
 [ "$SELF_ATTACHED" = "0" ] && echo "  P1-4 reproduced: xswitcher reads its own virtual keyboard:" && grep -En "^  .*keybd interface" "$LOG" | head -4

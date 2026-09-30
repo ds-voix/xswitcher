@@ -202,6 +202,12 @@ var (
 
 	Action = regexp.MustCompile("^Action\\..+")
 	ActionName = regexp.MustCompile("\\..+$")
+	// A "SEQ:" tail whose length is not fixed: bracket classes and "(?" group flags are
+	// dropped first, so what is left of "* + ? { }" really is a repetition of a chain step.
+	SEQ_BRACKET = regexp.MustCompile("\\[[^]]*\\]")
+	SEQ_GROUP   = regexp.MustCompile("\\(\\?")
+	SEQ_REPEAT  = regexp.MustCompile("[*+?{]")
+
 	WordChars *(regexp.Regexp) // Actions.WordChars
 	WordHead *(regexp.Regexp) // Actions.WordHead
 
@@ -620,6 +626,40 @@ func seqParse(str string, act string) (seq TSequence) {
 	return seq
 }
 
+// chainHasAction reports whether the action chain "name" ends in the built-in action
+// "want", following the same "Action.xxx" references that doAction() expands.
+func chainHasAction(name, want string) bool {
+	seen := make(map[string]bool, len(ActionSet))
+	var walk func(string) bool
+	walk = func(n string) bool {
+		if seen[n] { return false }
+		seen[n] = true
+		for _, act := range ActionSet[n].Action {
+			if Action.MatchString(act) {
+				if walk(strings.TrimLeft(ActionName.FindString(act), ".")) { return true }
+			} else if act == want {
+				return true
+			}
+		}
+		return false
+	}
+	return walk(name)
+}
+
+// hasFreeQuantifier tells whether a compiled "SEQ:" tail can match a variable number of
+// key events. RetypeWord() wipes len(WORD) - EXTRA keys and takes EXTRA from the length of
+// the match (see testAction), so a tail of unfixed length silently changes how much is
+// wiped. Measured on the stand: ".*PAUSE:1,PAUSE:0" matched the whole SeqLength window,
+// EXTRA grew to 12 and RetypeWord did nothing at all --
+// "RetypeWord error: WORD(12) is smaller than EXTRA(12)!" -- the layout switched, the word
+// stayed in the wrong one. xswitcher.conf warns about it in a comment; warn at the start.
+func hasFreeQuantifier(pattern string) bool {
+	// "[0-9A-Z=-]" and "[LR]_SHIFT" are character classes, not repetitions; "(?i)" and
+	// "(?:" carry no length either. Nothing else may keep a "*", "+", "?" or "{".
+	rest := SEQ_GROUP.ReplaceAllString(SEQ_BRACKET.ReplaceAllString(pattern, ""), "(")
+	return SEQ_REPEAT.MatchString(rest)
+}
+
 func sequences() {
 	var err error
 
@@ -638,8 +678,17 @@ func sequences() {
 
 	ActSeq = make(map[string] TSequences)
 	for key, value := range Actions.Custom {
+		retypes := chainHasAction(key, "RetypeWord")
 		for _, s := range value {
 			ActSeq[key] = append(ActSeq[key], seqParse(s, key))
+			if ! retypes { continue }
+			rule := template(s)
+			if tpl := SEQ.FindAllStringIndex(rule, -1); tpl != nil {
+				t := strings.TrimLeft(rule[ tpl[0][0] :tpl[0][1] ], " SEQ:")
+				if hasFreeQuantifier(t) {
+					fmt.Printf("Parse warning: the rule for \"Action.%s\" ends in the RetypeWord action, but its SEQ tail \"%s\" matches a varying number of key events. RetypeWord takes the number of the shortcut's own events from that match, so it wipes too few characters or none at all. Write the tail as the exact chain, e.g. \"SEQ:(PAUSE:1,PAUSE:0)\".\n", key, t)
+				}
+			}
 		}
 	}
 
