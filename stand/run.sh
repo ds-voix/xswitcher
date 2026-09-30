@@ -14,8 +14,8 @@ TOTAL=0
 # "ALL GREEN" is only meaningful together with the number of checks behind it: a phase
 # that aborts early (or gets commented out while debugging) must not look like a pass.
 # Keep this in sync with the number of check() calls below
-# (14 lifecycle/stream + 3 SEQ tail + 10 X11 branch).
-EXPECT=27
+# (14 lifecycle/stream + 3 SEQ tail + 13 X11 branch).
+EXPECT=30
 
 say() { printf '%-46s %s\n' "$1" "${2:-}"; }
 check() { # check <name> <0|1>
@@ -203,15 +203,27 @@ check "X4 the X11 branch reads group 0, asks for 1" "$?"
 /tmp/xgroup get until 1 3 >/dev/null; check "X5 the live server is on group 1 after the action" "$?"
 python3 stand/analyze.py "$TSV4" "H,E,L,L,O" none; check "X6 wipe+retype, no shortcut" "$?"
 
+# Switch() walks A.Layouts and wraps to its first entry once the last one is used
+# (next >= len(A.Layouts) -> 0), so the second trigger has to land back on group 0.
+TSV7=/tmp/keybd7.tsv
+python3 stand/sniff.py "keybd interface" "$TSV7" 15 >/tmp/sniff7.log 2>&1 &
+sleep 1
+python3 stand/source_key.py play "$SRC" "B,Y,E,PAUSE"
+sleep 3
+grep -q "Language: -1 >> 1" /tmp/x11.log && grep -q "Language: 0 >> 0" /tmp/x11.log
+check "X7 the second trigger reports reading 1, asking for 0" "$?"
+/tmp/xgroup get until 0 3 >/dev/null; check "X8 the live server is back on group 0" "$?"
+python3 stand/analyze.py "$TSV7" "B,Y,E" none; check "X9 second word wiped and retyped" "$?"
+
 /tmp/xgroup set 2 >/dev/null 2>&1          # German: outside [ActionKeys] Layouts = [0, 1]
-/tmp/xgroup get until 2 3 >/dev/null; check "X7 gate precondition: server on group 2" "$?"
+/tmp/xgroup get until 2 3 >/dev/null; check "X10 gate precondition: server on group 2" "$?"
 TSV5=/tmp/keybd5.tsv
 python3 stand/sniff.py "keybd interface" "$TSV5" 15 >/tmp/sniff5.log 2>&1 &
 sleep 1
 python3 stand/source_key.py play "$SRC" "W,O,R,D,PAUSE"
 sleep 3
 [ -s "$TSV5" ]; EXTRA_KEYS=$?
-[ "$EXTRA_KEYS" != "0" ]; check "X8 unmanaged group is not intercepted" "$?"
+[ "$EXTRA_KEYS" != "0" ]; check "X11 unmanaged group is not intercepted" "$?"
 [ "$EXTRA_KEYS" = "0" ] && { echo "  emitted while the group was unmanaged:"; head -3 "$TSV5" | sed 's/^/  /'; }
 
 /tmp/xgroup set 0 >/dev/null 2>&1          # back to a managed group: the gate must let go
@@ -222,7 +234,7 @@ python3 stand/sniff.py "keybd interface" "$TSV6" 15 >/tmp/sniff6.log 2>&1 &
 sleep 1
 python3 stand/source_key.py play "$SRC" "H,I,PAUSE"
 sleep 3
-python3 stand/analyze.py "$TSV6" "H,I" none; check "X9 managed group works again after the gate" "$?"
+python3 stand/analyze.py "$TSV6" "H,I" none; check "X12 managed group works again after the gate" "$?"
 [ -s /tmp/x11.log ] && { echo "  x11 branch output:"; grep -E "Language|RETYPE|BACKSPACE" /tmp/x11.log | tail -6 | sed 's/^/    /'; }
 kill $X11PID 2>/dev/null
 
