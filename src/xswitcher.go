@@ -239,6 +239,10 @@ var (
 	// twice. Measured: the duplicated stream desynchronised the PAUSE press/release counters
 	// and RetypeWord leaked its own trigger into the output ("found pushed keys after retyping
 	// was done!"). One reader per path is what this map guarantees.
+	// A reused number is not a reason to skip a device: destroying a device wakes its blocked
+	// read with an error, so the entry is gone before the watcher's next CREATE is handled (that
+	// one sleeps a second per event). Measured: event0 came back for six consecutive keyboards,
+	// and stand phase 13 (D5/D6) attaches the sixth one and switches with it.
 	attached = make(map[string]bool)
 	attachedMu sync.Mutex
 
