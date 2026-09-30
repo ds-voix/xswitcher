@@ -16,8 +16,8 @@ TOTAL=0
 # "ALL GREEN" is only meaningful together with the number of checks behind it: a phase
 # that aborts early (or gets commented out while debugging) must not look like a pass.
 # Keep this in sync with the number of check() calls below
-# (14 lifecycle/stream + 3 SEQ tail + 14 X11 branch + 6 single-reader + 1 descriptor).
-EXPECT=38
+# (14 lifecycle/stream + 3 SEQ tail + 16 X11 branch + 6 single-reader + 1 descriptor).
+EXPECT=40
 
 say() { printf '%-46s %s\n' "$1" "${2:-}"; }
 check() { # check <name> <0|1>
@@ -267,6 +267,32 @@ sleep 0.5
 python3 stand/source_key.py play "$SRC" "PAUSE"        # RetypeWord trigger on an (expected) empty buffer
 sleep 3
 [ ! -s "$TSV11" ]; check "X13 stale word dropped by the unmanaged gate" "$?"
+
+# X14: the issue #13 case. The focus moves to a DIFFERENT real window (B, "terminal") and back to
+# A ("editor") in the middle of a word -- yakuake's Alt+` dropdown in the report. The old code held
+# one global buffer and dropped it on any window change, so A's half-typed word was lost and the
+# next switch trigger retype errored. With per-window buffers, save A's word on leaving, restore it
+# on return: the retype after the detour must still wipe and retype exactly "W,O,R,D".
+python3 stand/source_key.py play "$SRC" "ENTER"     # NewSentence: begin from a clean buffer
+sleep 0.4
+# /tmp/x11.log is cumulative across the whole phase, and X13's intentional empty retype already
+# wrote a "RetypeWord error" into it. Count before and after so X14 asserts only that the window
+# detour introduces no NEW error, instead of tripping over an earlier sub-check's benign log line.
+ERR_BEFORE=$(grep -c "RetypeWord error" /tmp/x11.log)
+TSV12=/tmp/keybd12.tsv
+python3 stand/sniff.py "keybd interface" "$TSV12" 25 >/tmp/sniff12.log 2>&1 &
+sleep 1
+python3 stand/source_key.py play "$SRC" "W,O"       # start a word in window A (focus is on A)
+sleep 0.4
+kill -USR1 $MW; sleep 0.5                           # focus -> window B, a different window id
+python3 stand/source_key.py play "$SRC" "Q,U"       # a distinct word typed in B
+sleep 0.4
+kill -USR2 $MW; sleep 0.5                           # focus -> back to window A
+python3 stand/source_key.py play "$SRC" "R,D,PAUSE" # finish A's word; PAUSE fires RetypeWord
+sleep 3
+ERR_AFTER=$(grep -c "RetypeWord error" /tmp/x11.log)
+[ "$ERR_AFTER" = "$ERR_BEFORE" ]; check "X14 no new RetypeWord error across a real window switch" "$?"
+python3 stand/analyze.py "$TSV12" "W,O,R,D" none; check "X14 window A's word survived the detour through B" "$?"
 [ -s /tmp/x11.log ] && { echo "  x11 branch output:"; grep -E "Language|RETYPE|BACKSPACE" /tmp/x11.log | tail -6 | sed 's/^/    /'; }
 kill $X11PID 2>/dev/null
 

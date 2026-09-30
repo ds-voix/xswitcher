@@ -276,6 +276,27 @@ var (
 	clipboardOk = false
 )
 
+// A WORD typed in one window must not be lost when the focus briefly goes to another window and
+// comes back (issue #13: Opera -> yakuake -> Opera between two letters). The global buffer
+// variables above stay the "active" buffer for the window that currently owns input focus; on a
+// focus change the outgoing buffer is saved under its window id and the incoming window's buffer
+// is restored (or started empty). The virtual "WORD" state key is owned by the buffer, not by the
+// machine-wide modifier set, so it travels with it via wordDone.
+type winBuffers struct {
+	TEST, WORD, SENTENCE t_keys
+	CTRL_WORD, CTRL_SENTENCE map[string]bool
+	COMPOSE int
+	wordDone bool // whether CTRL["WORD"] was set when this buffer was saved
+}
+
+var (
+	winBuf    = map[C.Window]*winBuffers{}
+	winLRU    []C.Window // most-recently-focused first, bounded by winBufMax
+	bufWindow C.Window   // the window the active global buffers belong to
+)
+
+const winBufMax = 32 // LRU cap: a daemon running for months must not keep every closed window
+
 func config() {
 	var (
 		conf map [string]interface{}
@@ -854,6 +875,54 @@ func dropBuffers() {
 	}
 }
 
+func touchWindow(id C.Window) {
+	for i, w := range winLRU {
+		if w == id {
+			winLRU = append(winLRU[:i], winLRU[i+1:]...)
+			break
+		}
+	}
+	winLRU = append([]C.Window{id}, winLRU...)
+	for len(winLRU) > winBufMax {
+		oldest := winLRU[len(winLRU)-1]
+		winLRU = winLRU[:len(winLRU)-1]
+		delete(winBuf, oldest)
+	}
+}
+
+// saveBuffers snapshots the active global buffers under id, so that focusing back into id later
+// can restore them. The "WORD" pseudo state key leaves the machine-wide CTRL map with the buffer.
+func saveBuffers(id C.Window) {
+	_, wd := CTRL["WORD"]
+	winBuf[id] = &winBuffers{
+		TEST: TEST, WORD: WORD, SENTENCE: SENTENCE,
+		CTRL_WORD: CTRL_WORD, CTRL_SENTENCE: CTRL_SENTENCE,
+		COMPOSE: COMPOSE, wordDone: wd,
+	}
+	delete(CTRL, "WORD")
+	touchWindow(id)
+}
+
+// loadBuffers makes id the owner of the active global buffers: restore its snapshot if the window
+// has been focused before, otherwise start from a clean buffer. Either way id becomes the current
+// buffer window, and the LRU order is refreshed.
+func loadBuffers(id C.Window) {
+	b, ok := winBuf[id]
+	if !ok {
+		dropBuffers()
+		touchWindow(id)
+		return
+	}
+	TEST, WORD, SENTENCE = b.TEST, b.WORD, b.SENTENCE
+	CTRL_WORD, CTRL_SENTENCE, COMPOSE = b.CTRL_WORD, b.CTRL_SENTENCE, b.COMPOSE
+	if b.wordDone {
+		CTRL["WORD"] = true
+	} else {
+		delete(CTRL, "WORD")
+	}
+	touchWindow(id)
+}
+
 func newWord() {
 	end := len(WORD) - 1
 	if (end >= 0) && (WORD[end].value == 1) {
@@ -1398,8 +1467,14 @@ func checkAppend(event t_key, slice ...*t_keys) {
 
 
 	if getActiveWindowId() { // New focused window detected
-		// Drop buffers, but store this event
-		dropBuffers()
+		// Save the buffer the outgoing window had collected and restore the incoming window's own,
+		// instead of dropping it: this is what keeps a half-typed word when focus blips to another
+		// window and back (issue #13). A first-ever window starts from a clean buffer.
+		if bufWindow > 1 { // skip None(0)/PointerRoot(1): not a real buffer owner
+			saveBuffers(bufWindow)
+		}
+		loadBuffers(ActiveWindowId)
+		bufWindow = ActiveWindowId
 		setWindowActions()
 	} else if WC == nil {
 		// X named no window yet (None/PointerRoot, or no WM at all): without an action set
