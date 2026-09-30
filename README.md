@@ -54,35 +54,59 @@ But there is the internal "respawn" action in case You connects new keyboard/mou
 By default, the long press of "Scroll lock" triggers "respawn". (Respawn does the complete self-restart).
 
 ## How to build.
-You must install (libX11-devel | libx11-dev) + (libXmu-devel | libxmu-dev) packages for X bindings.  
+You must install (libX11-devel | libx11-dev) package for X bindings.  
 * The package name may, of course, be different in Your distro.  
+X calls are made through cgo, so a C compiler ("gcc" or "clang") must be present too.  
 And, of course, you must have the working go environment.  
-Obtain dependencies:
+Build from the repository root:
 
-    go get "github.com/spf13/pflag" # CLI keys
-    go get "github.com/pelletier/go-toml"      # Actual TOML parser
-    go get "github.com/gvalkov/golang-evdev"   # Keyboard and mouse events
-    go get "github.com/micmonay/keybd_event"   # Virtual keyboard !!(must be improved to deal with complex input)
-    go get "github.com/kballard/go-shellquote" # joining/splitting strings using sh's word-splitting rules
+    go build -o xswitcher ./src/
 
-Unfortunately my pull request https://github.com/micmonay/keybd_event/pull/32 still stays unaccepted.  
-You must put "src/keybd_event/keybd_linux_export.go" inside "keybd_event" sources for successful assembly.  
-You must also move "embeddedConfig" and "exec" internal libraries under Your "src/xswitcher" to satisfy
+Nothing else is required. "go.mod" resolves every dependency by itself, no "go get" round is needed.  
+The virtual keyboard library is not fetched from the network either:
 
-    import (
-    "xswitcher/embeddedConfig"
-    "xswitcher/exec"
-    )
-declaration.
+    replace github.com/micmonay/keybd_event => ./src/keybd_event/
 
-Now You are ready to build. I do the portable static build using the string below:
+points it at the sources kept under "src/keybd_event", where my "keybd_linux_export.go" already lives.  
+(Unfortunately my pull request https://github.com/micmonay/keybd_event/pull/32 still stays unaccepted.)  
+"embeddedConfig", "exec" and "scancodes" are imported through the module name "xswitcher", so they must not
+be moved under "src/" as the earlier version of this instruction told You to do.
 
-    go build -o xswitcher -ldflags "-s -w" --tags static_all src/*.go && chmod +xs xswitcher
+The resulting binary is not static: it links libX11 (and libxcb) dynamically, as any X desktop provides them.  
+To strip it, as I do for the "bin" folder, add the linker flags:
+
+    go build -o xswitcher -ldflags "-s -w" ./src/ && chmod +xs xswitcher
 
 Put the config to "/etc/xswitcher/xswitcher.conf" (or just use embedded one)
 and install xswitcher executable under "/usr/local/bin/" or where You prefer.
 
 Make it executable, e.g. "chmod +xs /usr/local/bin/xswitcher", configure the autostart inside Your X GUI and enjoy.
+
+## How to verify.
+xswitcher is a keylogger on top of the kernel input layer, so an honest check needs "/dev/input" and "uinput",  
+not a mocked keyboard. The "stand" folder holds the end-to-end rig that does exactly this inside one privileged  
+Linux container. It builds the daemon, runs it, creates a *second* virtual keyboard through uinput as the source  
+device, injects keys into it and then asserts on the EV_KEY stream xswitcher emits on its own keyboard:
+
+* "go build", "go vet" and "go test ./..." pass;
+* "HELLO" + Pause wipes 5 symbols, sends the layout shortcut and retypes the word;
+* a focus loss in the middle of a word does not wipe the collected word (the buffers survive "None" focus);
+* a lone LeftCtrl tap only cycles the layout, with no BackSpaces at all.
+
+Run it from the repository root:
+
+    bash stand/run-stand.sh
+
+It needs docker (or podman) with "--privileged" and the "uinput" + "evdev" modules loaded on the host kernel.  
+On Windows 11 with Docker Desktop those modules are built but not autoloaded in the "docker-desktop" VM, so  
+"stand/setup-host.sh" loads them; it has to be re-run after every WSL VM restart. No desktop session, no  
+full distro installation and no second machine are required. Set "DUMPLOG=1" to get the whole daemon log.
+
+What the container deliberately does not prove: the X embedding itself. Xvfb refuses a two-group keymap  
+("setxkbmap -layout us,ru" reports success but leaves a single group), so "XkbLockGroup" cannot be observed  
+there; the shipped default config works around it anyway ("[Wayland] BypassX"), and the stand measures the  
+emitted key stream instead. Layout switching through the X API can only be verified in a real X session  
+with two layouts configured.
 
 ## KDE@Wayland: shit happens
 Wayland cancels all the X groundwork for multi-language systems.
@@ -102,7 +126,7 @@ Then, in "xswitcher.conf":
      Delay = 50
 
 * It takes about 50 ms to complete switching the keyboard layout in my KDE, so I set 50 as the default value.
-* Up to 4 language shortcuts "Layout0"…"Layout3".
+* Up to 4 language shortcuts "Layout0"ï¿½"Layout3".
 
 ## Packaging
 I don't have enough time to maintain any distro package (rpm, dpkg, etc.).  
