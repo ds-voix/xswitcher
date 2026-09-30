@@ -1,6 +1,11 @@
 // Package keybd_event is used for a key press simulated in Windows, Linux and Mac
 package keybd_event
 
+// DeviceName is the name the virtual keyboard registers under on Linux' input layer.
+// Code that both emits through this keyboard and reads /dev/input must skip it,
+// otherwise it gets its own events back.
+const DeviceName = "keybd interface"
+
 //KeyBonding type for keybd_event
 type KeyBonding struct {
 	hasCTRL   bool

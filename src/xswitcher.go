@@ -1349,6 +1349,10 @@ func connectEvents(connectPath string) {
 		if (connectPath != "") && (dev.Path != connectPath) {
 			continue
 		}
+		if dev.Name == keybd_event.DeviceName { // Own output would be read back as input
+			fmt.Printf("- %s:\t%s (own virtual keyboard)\n", dev.Path, dev.Name)
+			continue
+		}
 		skip := true
 		d, err := evdev.Open(dev.Path)
 		if err != nil {

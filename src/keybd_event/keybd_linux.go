@@ -66,7 +66,7 @@ func initKeyBD() error {
 	}
 	keyEventSet()
 	uidev := uinput_user_dev{}
-	for i, c := range "keybd interface" {
+	for i, c := range DeviceName {
 		uidev.name[i] = C.char(c)
 	}
 	uidev.id.bustype = C.BUS_USB
