@@ -66,6 +66,7 @@ import (
 	"sort"
 	"strings"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 //	"unsafe"
@@ -230,6 +231,16 @@ var (
 	// Shared t_key queues (it's ok to share *buffered* channels *writes*)
 	keyboardEvents = make(chan t_key, 8)
 	miceEvents = make(chan t_key, 8)
+
+	// Node path -> a reader is running for it. An open fd survives the unlink of its node, so
+	// re-creating /dev/input/eventN (a udev reload, a manual mknod) leaves the previous reader
+	// alive on the same kernel device while the inotify CREATE starts another one next to it.
+	// Both then push every keystroke into keyboardEvents and the state machine sees each key
+	// twice. Measured: the duplicated stream desynchronised the PAUSE press/release counters
+	// and RetypeWord leaked its own trigger into the output ("found pushed keys after retyping
+	// was done!"). One reader per path is what this map guarantees.
+	attached = make(map[string]bool)
+	attachedMu sync.Mutex
 
 	// Xorg via C-bindings
 	display *C.struct__XDisplay
@@ -1411,7 +1422,15 @@ func dropKey(event t_key) {
 }
 
 func events(device *evdev.InputDevice) {
+	path := device.Path()
 	name, _ := device.Name()
+	// Forget the path only when this reader really stops, so that a device attached again later
+	// can be opened once more.
+	defer func() {
+		attachedMu.Lock()
+		delete(attached, path)
+		attachedMu.Unlock()
+	}()
 	for {
 		event, err := device.ReadOne()
 		if err != nil {
@@ -1446,6 +1465,13 @@ func connectEvents(connectPath string) {
 			fmt.Printf("- %s:\t%s (own virtual keyboard)\n", dev.Path, dev.Name)
 			continue
 		}
+		attachedMu.Lock()
+		reading := attached[dev.Path]
+		attachedMu.Unlock()
+		if reading { // A reader for this path is already running
+			fmt.Printf("- %s:\t%s (already attached)\n", dev.Path, dev.Name)
+			continue
+		}
 		skip := true
 		d, err := evdev.Open(dev.Path)
 		if err != nil {
@@ -1461,6 +1487,11 @@ func connectEvents(connectPath string) {
 		for _, t := range d.CapableTypes() {
 //			fmt.Printf("  Event type %d (%s)\n", t, evdev.TypeName(t))
 			if t == evdev.EV_KEY {
+				// Registered before the goroutine starts: events() removes the entry when it
+				// leaves, so marking it later could let a second reader slip in.
+				attachedMu.Lock()
+				attached[dev.Path] = true
+				attachedMu.Unlock()
 				go events(d)
 				skip = false
 				fmt.Printf("  %s:\t%s\n", dev.Path, dev.Name)

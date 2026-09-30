@@ -1,7 +1,8 @@
 #!/bin/bash
 # End-to-end stand: real evdev source device -> xswitcher -> its own uinput keyboard.
 # Phases 5-11 check the Wayland branch (the shipped config replays shortcuts, BypassX=true) on
-# the emitted EV_KEY stream; phase 12 checks the X11 branch (XkbLockGroup) on the live server.
+# the emitted EV_KEY stream; phase 12 checks the X11 branch (XkbLockGroup) on the live server;
+# phase 13 checks that re-creating an already attached device node cannot start a second reader.
 # Requires: docker run --privileged, uinput module loaded on the host kernel.
 set -u
 cd /w
@@ -14,13 +15,27 @@ TOTAL=0
 # "ALL GREEN" is only meaningful together with the number of checks behind it: a phase
 # that aborts early (or gets commented out while debugging) must not look like a pass.
 # Keep this in sync with the number of check() calls below
-# (14 lifecycle/stream + 3 SEQ tail + 13 X11 branch).
-EXPECT=30
+# (14 lifecycle/stream + 3 SEQ tail + 13 X11 branch + 6 single-reader).
+EXPECT=36
 
 say() { printf '%-46s %s\n' "$1" "${2:-}"; }
 check() { # check <name> <0|1>
     TOTAL=$((TOTAL + 1))
     if [ "$2" = "0" ]; then say "$1" "PASS"; else say "$1" "FAIL"; FAILED=1; fi
+}
+
+source_path() { # the node of the stand's own source keyboard, whatever eventN it got
+    python3 - <<'PY'
+import sys, evdev
+for p in evdev.list_devices():
+    try:
+        d = evdev.InputDevice(p)
+    except Exception as err:      # a node whose kernel device is already gone
+        print("skip %s: %s" % (p, err), file=sys.stderr)
+        continue
+    if d.name == "stand-source-keyboard":
+        print(d.path); break
+PY
 }
 
 echo "--- 1. device nodes ---"
@@ -41,6 +56,7 @@ setxkbmap -layout us >/dev/null 2>&1
 
 echo "--- 3. source keyboard ---"
 python3 stand/source_key.py hold >/tmp/source.log 2>&1 &
+SPID=$!
 # The node evdev creates for the uinput device appears asynchronously, and --privileged does
 # not add devices created after the container started, so mknod has to be retried until
 # /sys/class/input shows it. Measured: with uinput and evdev both loaded and /dev/uinput
@@ -48,14 +64,7 @@ python3 stand/source_key.py hold >/tmp/source.log 2>&1 &
 SRC=""
 for i in $(seq 20); do
     bash stand/mknod-input.sh >>/tmp/mknod.log 2>&1
-    SRC=$(python3 - <<'PY'
-import evdev
-for p in evdev.list_devices():
-    d = evdev.InputDevice(p)
-    if d.name == "stand-source-keyboard":
-        print(d.path); break
-PY
-)
+    SRC=$(source_path)
     [ -n "$SRC" ] && break
     sleep 0.5
 done
@@ -237,6 +246,96 @@ sleep 3
 python3 stand/analyze.py "$TSV6" "H,I" none; check "X12 managed group works again after the gate" "$?"
 [ -s /tmp/x11.log ] && { echo "  x11 branch output:"; grep -E "Language|RETYPE|BACKSPACE" /tmp/x11.log | tail -6 | sed 's/^/    /'; }
 kill $X11PID 2>/dev/null
+
+echo "--- 13. the source node re-created under the same path stays single-reader ---"
+# The inotify handler attaches whatever node appears in /dev/input, and an open fd survives the
+# unlink of its node. Re-creating eventN (a udev reload, a hand-made mknod) therefore left the
+# old events() goroutine reading the very same kernel device while a second one started next to
+# it; both pushed every keystroke into keyboardEvents, the press/release counters desynced and
+# RetypeWord leaked its own trigger into the output. Measured before the fix: 14 emitted rows
+# instead of 12, the stream ending in "119:1 119:0", and the log saying
+# "RetypeWord warning: found pushed keys after retyping was done!".
+NODE=$(basename "$SRC")
+[ -e "/sys/class/input/$NODE/dev" ] || { echo "FATAL: no /sys/class/input/$NODE/dev to rebuild $SRC from"; exit 9; }
+MAJMIN=$(cat "/sys/class/input/$NODE/dev")        # measured "13:64" for event0
+/tmp/xswitcher -v -c "$CONF" >/tmp/dup.log 2>&1 &
+DUPPID=$!
+sleep 2
+bash stand/mknod-input.sh >>/tmp/mknod.log 2>&1  # this daemon made a new uinput node
+TSV8=/tmp/keybd8.tsv
+python3 stand/sniff.py "keybd interface" "$TSV8" 25 >/tmp/sniff8.log 2>&1 &
+sleep 1
+python3 stand/source_key.py play "$SRC" "H,I,PAUSE"
+sleep 3
+python3 stand/analyze.py "$TSV8" "H,I" 2 >/tmp/a8.log 2>&1; A8=$?
+check "D1 baseline: one reader, a clean stream" "$A8"
+[ "$A8" != "0" ] && { echo "  --- baseline analysis ---"; tail -12 /tmp/a8.log | sed 's/^/  /'; }
+
+echo "  rebuilding $SRC (unlink + mknod c $MAJMIN; the kernel device itself never went away)"
+rm -f "$SRC"
+mknod "$SRC" c "${MAJMIN%%:*}" "${MAJMIN##*:}"
+sleep 3
+grep -n "New input device" /tmp/dup.log | tail -2 | sed 's/^/  /'
+python3 stand/source_key.py play "$SRC" "ENTER"  # Drop key: the next run starts from an empty buffer
+sleep 0.5
+TSV9=/tmp/keybd9.tsv
+python3 stand/sniff.py "keybd interface" "$TSV9" 25 >/tmp/sniff9.log 2>&1 &
+sleep 1
+python3 stand/source_key.py play "$SRC" "H,I,PAUSE"
+sleep 3
+python3 stand/analyze.py "$TSV9" "H,I" 1 >/tmp/a9.log 2>&1; A9=$?
+check "D4 the stream after the rebuild is still clean" "$A9"
+[ "$A9" != "0" ] && { echo "  --- after-rebuild analysis ---"; tail -12 /tmp/a9.log | sed 's/^/  /'; }
+ATTACH_HITS=$(grep -c "  $SRC:" /tmp/dup.log)
+[ "$ATTACH_HITS" = "1" ]; check "D2 $SRC attached exactly once after the rebuild (hits=$ATTACH_HITS)" "$?"
+grep -q "found pushed keys" /tmp/dup.log; PUSHED=$?
+[ "$PUSHED" != "0" ]; check "D3 no key left pushed (the reader counters stayed in sync)" "$?"
+[ "$PUSHED" = "0" ] && { echo "  desynchronised state after the rebuild:"; grep -E "RetypeWord|RETYPE" /tmp/dup.log | tail -4 | sed 's/^/  /'; }
+
+# A path registry must not turn into "never attach again": destroying the kernel device makes
+# the reader leave with an error, and a device that shows up afterwards has to be read once more.
+kill $SPID 2>/dev/null
+for i in $(seq 20); do grep -q "Closing device \"stand-source-keyboard\"" /tmp/dup.log && break; sleep 0.3; done
+grep -q "Closing device \"stand-source-keyboard\"" /tmp/dup.log; CLOSED=$?
+[ "$CLOSED" = "0" ]; check "D5 the reader left when its device was destroyed" "$?"
+[ "$CLOSED" != "0" ] && echo "  no Closing device line in /tmp/dup.log"
+# The container runs without udev, so the node of the destroyed device would stay behind and
+# break the next one: python-evdev's UInput() scans /dev/input/event* and dies on an
+# ENODEV node, and mknod-input.sh skips names that already exist. Measured: with the stale
+# /dev/input/event0 left in place the new source keyboard was never created at all.
+rm -f "$SRC"
+python3 stand/source_key.py hold >/tmp/source2.log 2>&1 &
+SPID2=$!
+NEWSRC=""
+for i in $(seq 20); do
+    bash stand/mknod-input.sh >>/tmp/mknod.log 2>&1
+    NEWSRC=$(source_path 2>/tmp/source_path.err)
+    [ -n "$NEWSRC" ] && break
+    sleep 0.5
+done
+echo "  new source device: ${NEWSRC:-none} (was $SRC)"
+[ -n "$NEWSRC" ] || {
+    echo "  --- the restarted source was not found: nodes ---"
+    ls -l /dev/input/ 2>&1 | sed 's/^/  /'
+    echo "  --- sysfs ---"
+    for d in /sys/class/input/event*; do
+        [ -e "$d" ] && echo "  $d name=$(cat "$d/device/name" 2>/dev/null) dev=$(cat "$d/dev" 2>/dev/null)"
+    done
+    echo "  --- hold output ---"; cat /tmp/source2.log 2>/dev/null | sed 's/^/  /'
+    echo "  --- source_path stderr ---"; head -5 /tmp/source_path.err | sed 's/^/  /'
+}
+TSV10=/tmp/keybd10.tsv
+python3 stand/sniff.py "keybd interface" "$TSV10" 25 >/tmp/sniff10.log 2>&1 &
+sleep 1
+python3 stand/source_key.py play "$NEWSRC" "ENTER" 2>/dev/null
+sleep 0.5
+python3 stand/source_key.py play "$NEWSRC" "H,I,PAUSE"
+sleep 3
+python3 stand/analyze.py "$TSV10" "H,I" 2 >/tmp/a10.log 2>&1; A10=$?
+check "D6 a device that reappears is attached and switches" "$A10"
+[ "$A10" != "0" ] && { echo "  --- reappearing-device analysis ---"; tail -12 /tmp/a10.log | sed 's/^/  /'; }
+kill $SPID2 2>/dev/null
+kill $DUPPID 2>/dev/null
 
 echo "--- detail ---"
 [ "$SELF_ATTACHED" = "0" ] && echo "  P1-4 reproduced: xswitcher reads its own virtual keyboard:" && grep -En "^  .*keybd interface" "$LOG" | head -4
