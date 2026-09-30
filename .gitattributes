@@ -2,3 +2,4 @@
 stand/*.sh text eol=lf
 stand/*.py text eol=lf
 stand/Dockerfile text eol=lf
+stand/*.c text eol=lf
