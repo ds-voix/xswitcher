@@ -11,9 +11,14 @@ LOG=/tmp/xswitcher.log
 CONF=/tmp/stand.conf
 TSV=/tmp/keybd.tsv
 FAILED=0
+TOTAL=0
+# "ALL GREEN" is only meaningful together with the number of checks behind it: a phase
+# that aborts early (or gets commented out while debugging) must not look like a pass.
+EXPECT=14
 
 say() { printf '%-46s %s\n' "$1" "${2:-}"; }
 check() { # check <name> <0|1>
+    TOTAL=$((TOTAL + 1))
     if [ "$2" = "0" ]; then say "$1" "PASS"; else say "$1" "FAIL"; FAILED=1; fi
 }
 
@@ -135,5 +140,10 @@ echo "  retype tail:"; grep -E "RETYPE|BACKSPACE|Language" "$LOG" | tail -6
 
 kill $XPID 2>/dev/null
 echo "=================================="
+if [ "$TOTAL" != "$EXPECT" ]; then
+    say "checks run ($TOTAL of $EXPECT expected)" "FAIL"
+    FAILED=1
+fi
+say "checks run" "$TOTAL"
 [ "$FAILED" = "0" ] && echo "STAND: ALL GREEN" || echo "STAND: FAILURES PRESENT"
 exit $FAILED
