@@ -552,6 +552,7 @@ func config() {
 		}
 	}
 	checkActionCycles()
+	collectManagedLayouts()
 }
 
 // doAction() expands "Action.xxx" references recursively and has no depth limit, so a
@@ -953,15 +954,44 @@ func Clean(A *TAction) {
 	newWord()
 }
 
+// managedLayouts are the XKB groups this configuration asks xswitcher to handle: the global
+// [ActionKeys] Layouts plus the lists and numbers of the actions that can really select a layout.
+// The global list alone is not enough: Switch() walks the action's own Layouts and Layout() takes
+// the action's own Layout, so a group reachable only through an action read as "extra language"
+// here and every key of it was dropped -- the switch the config asked for landed in a layout where
+// nothing is collected. A group named nowhere stays unmanaged, which is the "Don't impact extra
+// languages (e.g., Chinese)" case xswitcher.conf describes.
+var managedLayouts = map[int]bool{}
+
+func collectManagedLayouts() {
+	managedLayouts = make(map[int]bool, len(ActionKeys.Layouts))
+	for _, l := range ActionKeys.Layouts {
+		managedLayouts[l] = true
+	}
+	// Only a section that names the leaf itself may contribute: an unset Layout parses to Go's
+	// zero 0, not to the -1 the struct tag advertises, because nothing reads those tags -- so
+	// trusting every section's Layout would hand group 0 to xswitcher in every config.
+	for _, a := range ActionSet {
+		for _, act := range a.Action {
+			switch act {
+			case "Switch":
+				for _, l := range a.Layouts {
+					managedLayouts[l] = true
+				}
+			case "Layout":
+				if a.Layout >= 0 {
+					managedLayouts[a.Layout] = true
+				}
+			}
+		}
+	}
+}
+
 func checkLanguageId() bool {
 	state := new(C.struct__XkbStateRec)
 	C.XkbGetState(display, C.XkbUseCoreKbd, state);
 
-	for _, l := range ActionKeys.Layouts {
-		if l == int(state.group) { return true }
-	}
-
-	return false
+	return managedLayouts[int(state.group)]
 }
 
 func getXModifiers() uint32 {
@@ -1473,7 +1503,7 @@ func checkAppend(event t_key, slice ...*t_keys) {
 	}
 	getXModifiers() // X can lag while setting NUMLOCK state (and m.b. CAPSLOCK too), so check it after each key event
 
-	if ! checkLanguageId() { // An unmanaged group (a layout outside the global [ActionKeys] Layouts):
+	if ! checkLanguageId() { // A group no action and the global [ActionKeys] Layouts list name:
 		// drop the buffers, so switching back cannot retype a WORD left over from the last managed
 		// group. dropBuffers() is idempotent, so calling it on every event while unmanaged is safe.
 		dropBuffers()

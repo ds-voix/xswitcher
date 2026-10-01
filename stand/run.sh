@@ -16,8 +16,8 @@ TOTAL=0
 # "ALL GREEN" is only meaningful together with the number of checks behind it: a phase
 # that aborts early (or gets commented out while debugging) must not look like a pass.
 # Keep this in sync with the number of check() calls below
-# (14 lifecycle/stream + 4 SEQ tail + 16 X11 branch + 6 single-reader + 1 descriptor).
-EXPECT=41
+# (14 lifecycle/stream + 4 SEQ tail + 19 X11 branch + 6 single-reader + 1 descriptor).
+EXPECT=44
 
 say() { printf '%-46s %s\n' "$1" "${2:-}"; }
 check() { # check <name> <0|1>
@@ -309,6 +309,39 @@ ERR_AFTER=$(grep -c "RetypeWord error" /tmp/x11.log)
 python3 stand/analyze.py "$TSV12" "W,O,R,D" none; check "X14 window A's word survived the detour through B" "$?"
 [ -s /tmp/x11.log ] && { echo "  x11 branch output:"; grep -E "Language|RETYPE|BACKSPACE" /tmp/x11.log | tail -6 | sed 's/^/    /'; }
 kill $X11PID 2>/dev/null
+
+# X15-X17: the unmanaged-language gate and Switch() have to agree about which groups are ours.
+# The gate read only the global [ActionKeys] Layouts, while Switch()/Layout() walk the Layouts of
+# the concrete action -- so a group reachable only through an action was treated as an "extra
+# language": the gate dropped the buffers and returned before Switch() ever ran. The switch the
+# config asked for landed in a layout where nothing is collected.
+# Negative control, measured with collectManagedLayouts() removed from config(): the sniffer file
+# stays empty (no BackSpace, no replay) and /tmp/managed.log prints no "Language:" line at all,
+# because Language(-1) is only ever called from Switch().
+sleep 1
+sed '/^\[Action\.CyclicSwitch\]/,/^\[/ s/^\s*Layouts = \[0, 1\]/       Layouts = [0, 1, 2]/' /tmp/x11.conf > /tmp/managed.conf
+WIDENED=$(grep -c "Layouts = \[0, 1, 2\]" /tmp/managed.conf)
+KEPT=$(grep -c "Layouts = \[0, 1\]" /tmp/managed.conf)
+[ "$WIDENED" = "1" ] && [ "$KEPT" = "1" ]; check "X15 only the action Layouts widened, global list keeps [0, 1]" "$?"
+[ "$WIDENED" = "1" ] && [ "$KEPT" = "1" ] || say "  widened=$WIDENED kept=$KEPT:" "the next two checks prove nothing"
+/tmp/xgroup set 2 >/dev/null 2>&1          # German: unmanaged by [ActionKeys], managed via the action
+/tmp/xswitcher -v -c /tmp/managed.conf >/tmp/managed.log 2>&1 &
+MG_PID=$!
+sleep 2
+TSV13=/tmp/keybd13.tsv
+rm -f "$TSV13"
+python3 stand/sniff.py "keybd interface" "$TSV13" 15 >/tmp/sniff13.log 2>&1 &
+SNIFF13=$!
+sleep 1
+python3 stand/source_key.py play "$SRC" "B,Y,E,PAUSE"
+sleep 3
+python3 stand/analyze.py "$TSV13" "B,Y,E" none; check "X16 an action-named group is served, not dropped" "$?"
+[ -s "$TSV13" ] || { echo "  --- managed daemon output ---"; head -20 /tmp/managed.log | sed 's/^/  /'; }
+/tmp/xgroup get until 0 3 >/dev/null; SRV13=$?
+grep -q "Language: -1 >> 2" /tmp/managed.log && grep -q "Language: 0 >> 0" /tmp/managed.log; LOG13=$?
+[ "$SRV13" = "0" ] && [ "$LOG13" = "0" ]; check "X17 Switch() wrapped group 2 to 0 on the live server" "$?"
+kill $SNIFF13 2>/dev/null
+kill $MG_PID 2>/dev/null
 
 echo "--- 13. the source node re-created under the same path stays single-reader ---"
 # The inotify handler attaches whatever node appears in /dev/input, and an open fd survives the
