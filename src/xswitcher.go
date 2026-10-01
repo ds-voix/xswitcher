@@ -150,6 +150,11 @@ type TSequence struct {
 	OFF * regexp.Regexp
 	ON * regexp.Regexp
 	SEQ * regexp.Regexp
+	// Set while parsing for a rule whose chain ends in RetypeWord and whose "SEQ:" tail can
+	// match a varying number of key events. RetypeWord() takes the number of keys it must
+	// leave alone from the length of that match, so such a rule cannot compute it and does
+	// not fire at all (see testAction).
+	tailUnprovable bool
 }
 
 type TSequences []TSequence
@@ -688,7 +693,8 @@ func chainHasAction(name, want string) bool {
 // wiped. Measured on the stand: ".*PAUSE:1,PAUSE:0" matched the whole SeqLength window,
 // EXTRA grew to 12 and RetypeWord did nothing at all --
 // "RetypeWord error: WORD(12) is smaller than EXTRA(12)!" -- the layout switched, the word
-// stayed in the wrong one. xswitcher.conf warns about it in a comment; warn at the start.
+// stayed in the wrong one. xswitcher.conf warns about it in a comment; say it at the start and
+// never fire such a rule -- see TSequence.tailUnprovable.
 func hasFreeQuantifier(pattern string) bool {
 	// "[0-9A-Z=-]" and "[LR]_SHIFT" are character classes, not repetitions; "(?i)" and
 	// "(?:" carry no length either. Nothing else may keep a "*", "+", "?" or "{".
@@ -716,15 +722,18 @@ func sequences() {
 	for key, value := range Actions.Custom {
 		retypes := chainHasAction(key, "RetypeWord")
 		for _, s := range value {
-			ActSeq[key] = append(ActSeq[key], seqParse(s, key))
-			if ! retypes { continue }
-			rule := template(s)
-			if tpl := SEQ.FindAllStringIndex(rule, -1); tpl != nil {
-				t := strings.TrimLeft(rule[ tpl[0][0] :tpl[0][1] ], " SEQ:")
-				if hasFreeQuantifier(t) {
-					fmt.Printf("Parse warning: the rule for \"Action.%s\" ends in the RetypeWord action, but its SEQ tail \"%s\" matches a varying number of key events. RetypeWord takes the number of the shortcut's own events from that match, so it wipes too few characters or none at all. Write the tail as the exact chain, e.g. \"SEQ:(PAUSE:1,PAUSE:0)\".\n", key, t)
+			seq := seqParse(s, key)
+			if retypes {
+				rule := template(s)
+				if tpl := SEQ.FindAllStringIndex(rule, -1); tpl != nil {
+					t := strings.TrimLeft(rule[ tpl[0][0] :tpl[0][1] ], " SEQ:")
+					if hasFreeQuantifier(t) {
+						seq.tailUnprovable = true
+						fmt.Printf("Parse warning: the rule for \"Action.%s\" ends in the RetypeWord action, but its SEQ tail \"%s\" matches a varying number of key events. RetypeWord takes the number of the shortcut's own events from that match, so it wipes too few characters or none at all. The rule will not fire; write the tail as the exact chain, e.g. \"SEQ:(PAUSE:1,PAUSE:0)\".\n", key, t)
+					}
 				}
 			}
+			ActSeq[key] = append(ActSeq[key], seq)
 		}
 	}
 
@@ -1334,6 +1343,12 @@ TEST:
 		}
 		if test.SEQ != nil {
 			if test.SEQ.MatchString(TAIL.String()[1:]) {
+				if test.tailUnprovable {
+					// The shortcut's own event count would be read off this match, and the match
+					// has no fixed length. Firing would wipe a number nobody asked for, so let the
+					// next rule of the same action try instead.
+					continue TEST
+				}
 				tail := test.SEQ.FindString(TAIL.String()[1:]) // The last keys must be omited, e.g. while retyping word.
 				// Count tail commas
 				EXTRA = strings.Count(tail, ",") + 1
