@@ -1651,6 +1651,12 @@ func doAction(name *string) { // name of ActionSet
 
 func doWindowActions() {
 	TAIL.Reset()
+	// EXTRA is the event count the matched SEQ tail protects. testAction assigns it on every true
+	// return and RetypeWord - the only reader - is reached through that return alone, so no path reads
+	// a value an earlier event left behind. Clearing it with the rest of the per-event state keeps that
+	// a property of this call rather than of the program's history: a consumer added later, or a rule
+	// that stops carrying a tail, then wipes the word it actually holds.
+	EXTRA = 0
 
 	if WC == nil { return }
 	if WC.Actions == "" { return }
