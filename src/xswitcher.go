@@ -115,6 +115,9 @@ const (
 var (
 	CONFIG_PATH string = "/etc/xswitcher/xswitcher.conf"
 
+	// daemonStartTime anchors the "uptime" field of the IPC status response.
+	daemonStartTime = time.Now()
+
 	debug bool
 	DEBUG *bool = &debug
 
@@ -266,6 +269,8 @@ func config() {
 	TEST_MODE = F.BoolP("test", "t", *TEST_MODE, "Only output all key events to STDERR. No actions.")
 	F.Init("", flag.ExitOnError)
 	F.Parse(os.Args[1:])
+	// Publish the effective path for the IPC config handlers below.
+	CONFIG_PATH = *config_path
 
 	conf_file, err := os.Open(*config_path)
 	if err != nil {
@@ -1666,6 +1671,62 @@ func Respawn(*TAction) { // Completelly respawn xswitcher.
 	os.Exit(0)
 }
 
+// --- IPC handlers for the GUI (see internal/ipc) -----------------------------
+
+func ipcStatus() ipc.Response {
+	return ipc.Response{
+		Ok:     true,
+		PID:    os.Getpid(),
+		Uptime: time.Since(daemonStartTime).Truncate(time.Second).String(),
+		Config: CONFIG_PATH,
+	}
+}
+
+func ipcReload() ipc.Response {
+	p, err := forkChild()
+	if err != nil {
+		return ipc.Response{Ok: false, Error: fmt.Sprintf("respawn: %v", err)}
+	}
+	// Give the IPC response a chance to reach the GUI before this process exits.
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		os.Exit(0)
+	}()
+	return ipc.Response{Ok: true, PID: p.Pid}
+}
+
+func ipcGetConfig() (map[string]any, error) {
+	tree, err := cfg.ReadTOMLTree(CONFIG_PATH)
+	if err != nil {
+		return nil, err
+	}
+	return tree.ToMap(), nil
+}
+
+func ipcSetConfig(mods map[string]any) error {
+	normalized := make(map[string]interface{}, len(mods))
+	for key, value := range mods {
+		// JSON turns every TOML integer into float64; go-toml refuses plain
+		// ints on Marshal, so restore them as int64.
+		if f, ok := value.(float64); ok {
+			if i := int64(f); float64(i) == f {
+				value = i
+			}
+		}
+		normalized[key] = value
+	}
+	return cfg.WriteTOMLChecked(CONFIG_PATH, normalized)
+}
+
+func ipcValidate() error {
+	data, err := os.ReadFile(CONFIG_PATH)
+	if err != nil {
+		return err
+	}
+	_, err = cfg.ParseTOML(data)
+	return err
+}
+
 func clipboardText() (string, bool) { // The clipboard's text, or false if it is unreadable or holds none.
 	// Init only has to succeed once per process, so the guard lives here instead of at every caller.
 	// The content itself is never printed: it is whatever the user last copied.
@@ -1781,7 +1842,8 @@ func main() {
 		if envSock, ok := os.LookupEnv("XSWITCHER_SOCK"); ok {
 			sockPath = envSock
 		}
-		srv := ipc.NewServer(sockPath, nil, nil)
+		srv := ipc.NewServer(sockPath, ipcStatus, ipcReload)
+		srv.SetConfigHandler(ipcGetConfig, ipcSetConfig, ipcValidate)
 		if err := srv.Start(); err != nil {
 			fmt.Printf("IPC server failed: %v\n", err)
 			return

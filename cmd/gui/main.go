@@ -27,10 +27,18 @@ func main() {
 
 	client := ipc.NewClient(ipc.DefaultSocketPath)
 
+	editor, loadConfig := newEditorPanel(client)
+
 	tabs := container.NewAppTabs(
-		container.NewTabItem("Config", newEditorPanel(client)),
+		container.NewTabItem("Config", editor),
 		container.NewTabItem("About", newAboutPanel()),
 	)
+	// Re-read the live config every time the Config tab is opened.
+	tabs.OnSelected = func(item *container.TabItem) {
+		if item.Text == "Config" {
+			loadConfig()
+		}
+	}
 
 	statusBar := widget.NewLabel("Disconnected")
 	connectBtn := widget.NewButton("Connect", func() {
@@ -38,6 +46,7 @@ func main() {
 			statusBar.SetText(fmt.Sprintf("Error: %v", err))
 		} else {
 			statusBar.SetText("Connected to daemon")
+			loadConfig()
 		}
 	})
 

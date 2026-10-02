@@ -72,3 +72,40 @@ func (c *Client) Status() (Response, error) {
 func (c *Client) Reload() (Response, error) {
 	return c.Send(Request{Cmd: "reload"})
 }
+
+// GetConfig retrieves the daemon's current config file as a nested map.
+func (c *Client) GetConfig() (map[string]any, error) {
+	resp, err := c.Send(Request{Cmd: "get_config"})
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Ok {
+		return nil, fmt.Errorf("ipc: get_config: %s", resp.Error)
+	}
+	return resp.Data, nil
+}
+
+// SetConfig sends dotted-key modifications (e.g. "Keyboard.Delay") to the
+// daemon, which validates the resulting config before writing it.
+func (c *Client) SetConfig(mods map[string]any) error {
+	resp, err := c.Send(Request{Cmd: "set_config", Data: mods})
+	if err != nil {
+		return err
+	}
+	if !resp.Ok {
+		return fmt.Errorf("ipc: set_config: %s", resp.Error)
+	}
+	return nil
+}
+
+// Validate asks the daemon to re-parse its config file without applying it.
+func (c *Client) Validate() error {
+	resp, err := c.Send(Request{Cmd: "validate"})
+	if err != nil {
+		return err
+	}
+	if !resp.Ok {
+		return fmt.Errorf("ipc: validate: %s", resp.Error)
+	}
+	return nil
+}

@@ -24,13 +24,25 @@ type StatusFunc func() Response
 // It returns a Response indicating success or failure.
 type ReloadFunc func() Response
 
+// ConfigFunc reads the current config file content for "get_config".
+type ConfigFunc func() (map[string]any, error)
+
+// SetConfigFunc applies modifications and validates for "set_config".
+type SetConfigFunc func(mods map[string]any) error
+
+// ValidateFunc performs a dry-run parse of the current config for "validate".
+type ValidateFunc func() error
+
 // Server listens on a Unix domain socket and dispatches incoming commands.
 type Server struct {
-	path     string
-	statusFn StatusFunc
-	reloadFn ReloadFunc
-	listener net.Listener
-	mu       sync.Mutex
+	path        string
+	statusFn    StatusFunc
+	reloadFn    ReloadFunc
+	configFn    ConfigFunc
+	setConfigFn SetConfigFunc
+	validateFn  ValidateFunc
+	listener    net.Listener
+	mu          sync.Mutex
 }
 
 // NewServer creates an IPC server bound to the given socket path.
@@ -40,6 +52,13 @@ func NewServer(path string, statusFn StatusFunc, reloadFn ReloadFunc) *Server {
 		statusFn: statusFn,
 		reloadFn: reloadFn,
 	}
+}
+
+// SetConfigHandler registers the callback for get_config/set_config/validate commands.
+func (s *Server) SetConfigHandler(cfgFn ConfigFunc, setFn SetConfigFunc, valFn ValidateFunc) {
+	s.configFn = cfgFn
+	s.setConfigFn = setFn
+	s.validateFn = valFn
 }
 
 // Start begins listening in the background. It removes any stale socket file
@@ -119,6 +138,31 @@ func (s *Server) dispatch(req Request) Response {
 			return s.reloadFn()
 		}
 		return Response{Ok: false, Error: "reload not available"}
+	case "get_config":
+		if s.configFn == nil {
+			return Response{Ok: false, Error: "get_config not available"}
+		}
+		data, err := s.configFn()
+		if err != nil {
+			return Response{Ok: false, Error: err.Error()}
+		}
+		return Response{Ok: true, Data: data}
+	case "set_config":
+		if s.setConfigFn == nil {
+			return Response{Ok: false, Error: "set_config not available"}
+		}
+		if err := s.setConfigFn(req.Data); err != nil {
+			return Response{Ok: false, Error: err.Error()}
+		}
+		return Response{Ok: true}
+	case "validate":
+		if s.validateFn == nil {
+			return Response{Ok: false, Error: "validate not available"}
+		}
+		if err := s.validateFn(); err != nil {
+			return Response{Ok: false, Error: err.Error()}
+		}
+		return Response{Ok: true}
 	default:
 		return Response{Ok: false, Error: fmt.Sprintf("unknown command: %q", req.Cmd)}
 	}
