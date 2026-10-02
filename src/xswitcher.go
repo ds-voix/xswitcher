@@ -302,6 +302,17 @@ var (
 
 const winBufMax = 32 // LRU cap: a daemon running for months must not keep every closed window
 
+// actionsCustomHint sizes the initial capacity of Actions.Custom. The 4 preset keys are not custom,
+// but a config may carry fewer than 4 keys in total; `len(t) - 4` was then negative and `make`
+// panicked with "len out of range", turning a config typo into a crash. Only the capacity hint is
+// affected - the resulting map is the same either way.
+func actionsCustomHint(n int) int {
+	if n < 4 {
+		return 0
+	}
+	return n - 4
+}
+
 func config() {
 	var (
 		conf map [string]interface{}
@@ -420,7 +431,7 @@ func config() {
 		case "Actions":
 			switch t := value.(type) {
 			case map[string]interface{}:
-				Actions.Custom = make(map[string][]string, len(t) - 4) // 4 = count of preset keys
+				Actions.Custom = make(map[string][]string, actionsCustomHint(len(t)))
 				for k, v := range t {
 					switch k {
 					case "SeqLength":
