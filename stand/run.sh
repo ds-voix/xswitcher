@@ -3,7 +3,8 @@
 # Phases 5-11 check the Wayland branch (the shipped config replays shortcuts, BypassX=true) on
 # the emitted EV_KEY stream; phase 12 checks the X11 branch (XkbLockGroup) on the live server;
 # phase 13 checks that re-creating an already attached device node cannot start a second reader;
-# phase 14 checks that a device the scan skips does not keep its descriptor open.
+# phase 14 checks that a device the scan skips does not keep its descriptor open;
+# phase 15 checks that a keyboard advertising EV_ABS next to EV_KEY is attached and read (issue #12).
 # Phases X26-X30 check what an external Exec hook is handed: the typed word as text (issue #5), the
 # text of a live X selection owned by a second process (SendBuffer = "CLIPBOARD"), and that neither
 # the hook's input ever reaches the daemon's own -v log.
@@ -19,8 +20,9 @@ TOTAL=0
 # "ALL GREEN" is only meaningful together with the number of checks behind it: a phase
 # that aborts early (or gets commented out while debugging) must not look like a pass.
 # Keep this in sync with the number of check() calls below
-# (14 lifecycle/stream + 4 SEQ tail + 29 X11 branch + 6 single-reader + 1 descriptor + 3 clipboard hook).
-EXPECT=57
+# (14 lifecycle/stream + 4 SEQ tail + 29 X11 branch + 6 single-reader + 1 descriptor + 3 clipboard
+# hook + 4 BLE-like keyboard with EV_ABS).
+EXPECT=61
 
 say() { printf '%-46s %s\n' "$1" "${2:-}"; }
 check() { # check <name> <0|1>
@@ -28,16 +30,17 @@ check() { # check <name> <0|1>
     if [ "$2" = "0" ]; then say "$1" "PASS"; else say "$1" "FAIL"; FAILED=1; fi
 }
 
-source_path() { # the node of the stand's own source keyboard, whatever eventN it got
-    python3 - <<'PY'
-import sys, evdev
+source_path() { # source_path [name]: the node of a stand fixture, whatever eventN it got
+    NAME="${1:-stand-source-keyboard}" python3 - <<'PY'
+import os, sys, evdev
+want = os.environ["NAME"]
 for p in evdev.list_devices():
     try:
         d = evdev.InputDevice(p)
     except Exception as err:      # a node whose kernel device is already gone
         print("skip %s: %s" % (p, err), file=sys.stderr)
         continue
-    if d.name == "stand-source-keyboard":
+    if d.name == want:
         print(d.path); break
 PY
 }
@@ -700,6 +703,46 @@ echo "  bypassed devices in the log: ${HITS:-0} of 3, event descriptors held: $H
 [ "$HELD" != "1" ] && ls -l /proc/$FDPID/fd 2>/dev/null |
     grep -oE "/dev/input/event[0-9]+" | sort | uniq -c | sed 's/^/  /'
 kill $FDPID $CAMPID $SPID3 2>/dev/null
+
+echo "--- 15. a keyboard that also reports absolute axes is still a keyboard (issue #12) ---"
+# Keyboards over Bluetooth register EV_ABS next to EV_KEY (battery level, a media surface). xswitcher
+# used to conclude "EV_ABS or EV_REL => this is a mouse" and never opened such a device, which is what
+# issue #12 reports as "my Keychron types as a mouse". That heuristic is not in this tree -- upstream
+# removed it in 5fe6e3a, which predates the branch -- and the scan keys off EV_KEY alone
+# (connectEvents -> d.CapableTypes()). So this phase is a regression guard, not a claim of a fix: it
+# keeps the claim measured. The fixture advertises EV_KEY + EV_ABS + EV_MSC and writes an ABS_X sample
+# once per second for as long as the daemon is reading it.
+python3 stand/blelike.py hold >/tmp/blehold.log 2>&1 &
+BLE_HOLD=$!
+sleep 1
+bash stand/mknod-input.sh >>/tmp/mknod.log 2>&1        # the node appeared after the container started
+BLE_SRC=$(source_path "stand-ble-like-keyboard")
+[ -n "$BLE_SRC" ]; check "K1 the axis-reporting keyboard has a node to read" "$?"
+[ -z "$BLE_SRC" ] && { echo "  --- fixture ---"; tail -3 /tmp/blehold.log | sed 's/^/  /'; }
+ABS_CAP=$(python3 - "${BLE_SRC:-/dev/null}" <<'PY'
+import sys
+from evdev import InputDevice, ecodes as e
+c = InputDevice(sys.argv[1]).capabilities()
+print("key=%s abs=%s msc=%s" % (e.EV_KEY in c, e.EV_ABS in c, e.EV_MSC in c))
+PY
+)
+[ "$ABS_CAP" = "key=True abs=True msc=False" ]; check "K2 the fixture really advertises EV_ABS without EV_MSC ($ABS_CAP)" "$?"
+[ "$ABS_CAP" != "key=True abs=True msc=False" ] && say "  capabilities:" "K3 and K4 would prove nothing"
+/tmp/xswitcher -v -c "$CONF" >/tmp/ble.log 2>&1 &
+BLE_PID=$!
+sleep 2
+grep -Eq "^  ${BLE_SRC}:[[:space:]]+stand-ble-like-keyboard" /tmp/ble.log; ATT=$?
+[ "$ATT" = "0" ]; check "K3 the scanner attached it despite the absolute axes" "$?"
+[ "$ATT" != "0" ] && { echo "  --- device lines ---"; grep -E "^ *[x-]? ?/dev/input" /tmp/ble.log | head -8 | sed 's/^/  /'; }
+TSV9=/tmp/keybd9.tsv
+python3 stand/sniff.py "keybd interface" "$TSV9" 12 >/tmp/sniff9.log 2>&1 &
+sleep 1
+python3 stand/blelike.py play "$BLE_SRC" "A,B,PAUSE"   # a word typed on the BLE-like device, then the trigger
+sleep 3
+python3 stand/analyze.py "$TSV9" "A,B" 2 >/tmp/a9.log 2>&1; A9=$?
+check "K4 its letters produced a clean wipe and retype" "$A9"
+[ "$A9" != "0" ] && { echo "  --- analysis ---"; tail -12 /tmp/a9.log | sed 's/^/  /'; }
+kill $BLE_PID $BLE_HOLD 2>/dev/null
 
 echo "--- detail ---"
 [ "$SELF_ATTACHED" = "0" ] && echo "  P1-4 reproduced: xswitcher reads its own virtual keyboard:" && grep -En "^  .*keybd interface" "$LOG" | head -4
