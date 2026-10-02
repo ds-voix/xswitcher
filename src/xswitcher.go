@@ -1246,6 +1246,39 @@ func Layout(A *TAction) {
 	Language(A.Layout)
 }
 
+// resolveRunAs turns the [Action.X] "run_as" config (UID/GID) into the numeric credentials that
+// exec.ExecCommand applies. exec.ExecCommand only sets SysProcAttr.Credential when UID > 0, so
+// (0, 0) means "run as the current user" - the documented default when a config omits UID. The old
+// code called user.Lookup(A.UID) unconditionally, and looking up the empty string fails, so Exec
+// returned before starting the command: every [Action.X] Exec without a UID was a silent no-op.
+func resolveRunAs(uid, gid string) (uint32, uint32, error) {
+	if len(uid) == 0 {
+		return 0, 0, nil
+	}
+	user_, err := user.Lookup(uid)
+	if err != nil {
+		return 0, 0, err
+	}
+	u64, err := strconv.ParseUint(user_.Uid, 10, 32)
+	if err != nil {
+		return 0, 0, fmt.Errorf("non-integer uid for user %q: %v", uid, err)
+	}
+
+	gid_ := user_.Gid
+	if len(gid) > 0 {
+		group, err := user.LookupGroup(gid)
+		if err != nil {
+			return 0, 0, err
+		}
+		gid_ = group.Gid
+	}
+	g64, err := strconv.ParseUint(gid_, 10, 32)
+	if err != nil {
+		return 0, 0, fmt.Errorf("non-integer gid for user %q: %v", uid, err)
+	}
+	return uint32(u64), uint32(g64), nil
+}
+
 func Exec(A *TAction) {
 /*
 	Exec string
@@ -1301,33 +1334,12 @@ func Exec(A *TAction) {
 	}
 	c.Set_env = append(c.Set_env, A.Environment...)
 
-	// UID & GID
-	user_, err := user.Lookup(A.UID)
+	// UID & GID: an empty UID keeps (0, 0) so exec runs as the current user (see resolveRunAs).
+	c.UID, c.GID, err = resolveRunAs(A.UID, A.GID)
 	if err != nil {
-		fmt.Printf("Exec: user \"%s\" invalid: %v", A.UID, err)
+		fmt.Printf("Exec: run_as %q/%q invalid: %v\n", A.UID, A.GID, err)
 		return
 	}
-	u64, err := strconv.ParseUint(user_.Uid, 10, 32)
-	if err != nil {
-		fmt.Printf("Exec: non-integer uid! Is it linux?")
-		return
-	}
-	c.UID = uint32(u64)
-
-	gid := user_.Gid
-	if len(A.GID) > 0 {
-		group, err := user.LookupGroup(A.GID)
-		if err != nil {
-			fmt.Printf("Exec: group \"%s\" invalid: %v", A.GID, err)
-		}
-		gid = group.Gid
-	}
-	g64, err := strconv.ParseUint(gid, 10, 32)
-	if err != nil {
-		fmt.Printf("Exec: non-integer gid! Is it linux?")
-		return
-	}
-	c.GID= uint32(g64)
 
 	
 	if *VERBOSE || *DEBUG {
