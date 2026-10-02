@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	cfg "xswitcher/internal/config"
+)
 
 // The [Actions] capacity hint subtracts the 4 preset keys from the number of keys present. A config
 // with fewer than 4 keys made that negative and `make` panicked ("len out of range") on what is
@@ -13,8 +17,8 @@ func TestActionsCustomHintNeverNegative(t *testing.T) {
 		{5, 1}, {10, 6}, // custom keys beyond the four presets
 	}
 	for _, c := range cases {
-		if got := actionsCustomHint(c.n); got != c.want {
-			t.Errorf("actionsCustomHint(%d) = %d, want %d", c.n, got, c.want)
+		if got := cfg.ActionsCustomHint(c.n); got != c.want {
+			t.Errorf("ActionsCustomHint(%d) = %d, want %d", c.n, got, c.want)
 		}
 	}
 }

@@ -72,12 +72,12 @@ func TestUnprovableTailIsMarkedWhileParsing(t *testing.T) {
 		got  bool
 		want bool
 	}{
-		{"RetypeWord rule with a free tail", ActSeq["RetypeWord"][0].tailUnprovable, true},
-		{"RetypeWord rule with an exact tail", ActSeq["RetypeWord"][1].tailUnprovable, false},
-		{"non-retyping rule with a free tail", ActSeq["Plain"][0].tailUnprovable, false},
+		{"RetypeWord rule with a free tail", ActSeq["RetypeWord"][0].TailUnprovable, true},
+		{"RetypeWord rule with an exact tail", ActSeq["RetypeWord"][1].TailUnprovable, false},
+		{"non-retyping rule with a free tail", ActSeq["Plain"][0].TailUnprovable, false},
 	} {
 		if tc.got != tc.want {
-			t.Errorf("%s: tailUnprovable = %v, want %v", tc.what, tc.got, tc.want)
+			t.Errorf("%s: TailUnprovable = %v, want %v", tc.what, tc.got, tc.want)
 		}
 	}
 }
@@ -116,7 +116,7 @@ func TestUnprovableTailNeverFires(t *testing.T) {
 	if fired, extra := run(TSequence{SEQ: exact}); !fired || extra != 2 {
 		t.Errorf("the shipped exact tail: fired = %v EXTRA = %d, want true and 2", fired, extra)
 	}
-	if fired, extra := run(TSequence{SEQ: free, tailUnprovable: true}); fired || extra != -1 {
+	if fired, extra := run(TSequence{SEQ: free, TailUnprovable: true}); fired || extra != -1 {
 		t.Errorf("a marked free tail: fired = %v EXTRA = %d, want false and EXTRA left alone", fired, extra)
 	}
 }

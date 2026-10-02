@@ -92,9 +92,11 @@ check "B1 go build ./src/" "0"
 go vet ./src/ >/tmp/vet.log 2>&1; VET=$?
 grep -v '^go: downloading' /tmp/vet.log | head -20
 check "B2 go vet ./src/" "$VET"
-go test ./... >/tmp/test.log 2>&1; TEST=$?
+# Exclude cmd/gui from tests: the GUI uses Fyne which requires display/GPU
+# libraries not present in the headless stand container (plan constraint #12).
+go test $(go list ./... | grep -v '/cmd/gui') >/tmp/test.log 2>&1; TEST=$?
 grep -vE '^(go: |ok)' /tmp/test.log | head -5
-check "B3 go test ./... (all packages)" "$TEST"
+check "B3 go test (daemon packages)" "$TEST"
 
 echo "--- 5. run xswitcher ---"
 /tmp/xswitcher -v -c "$CONF" >"$LOG" 2>&1 &
