@@ -14,6 +14,12 @@ import (
 	"time"
 )
 
+// defaultMaxReply bounds how many bytes of a command's stdout/stderr we keep. The Command.max_reply
+// field is unexported and the only caller never assigns it, so without a fallback io.CopyN(dst, src, 0)
+// copied zero bytes and every Exec action reported empty output. 64 KiB is enough to show a useful
+// reply while a chatty child cannot grow our buffers without limit.
+const defaultMaxReply = 1 << 16
+
 type Command struct {
 	id string        // Sequence ID may be set. Othewise, it is auto-generated.
 	no_exec bool
@@ -84,8 +90,17 @@ func ExecCommand(c *Command) (*Result) {
 	stdout := io.Writer(&_stdout)
 	stderr := io.Writer(&_stderr)
   	if ! c.No_wait { // Otherwise, just fork process with /dev/null at stdout&stderr.
-		stdoutIn, _ = cmd.StdoutPipe()
-		stderrIn, _ = cmd.StderrPipe()
+		var perr error
+		if stdoutIn, perr = cmd.StdoutPipe(); perr != nil {
+			r.Status = -1
+			r.StdErr = []byte("stdout pipe: " + perr.Error())
+			return r
+		}
+		if stderrIn, perr = cmd.StderrPipe(); perr != nil {
+			r.Status = -1
+			r.StdErr = []byte("stderr pipe: " + perr.Error())
+			return r
+		}
 	}
 
 	r.Status = 0
@@ -163,10 +178,14 @@ func ExecCommand(c *Command) (*Result) {
 	}
 
 	// https://blog.kowalczyk.info/article/wOYk/advanced-command-execution-in-go-with-osexec.html
+	maxReply := c.max_reply
+	if maxReply <= 0 {
+		maxReply = defaultMaxReply
+	}
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		_, errStdout = io.CopyN(stdout, stdoutIn, c.max_reply)
+		_, errStdout = io.CopyN(stdout, stdoutIn, maxReply)
 		if errStdout == io.EOF {
 			errStdout = nil
 		} else {
@@ -174,7 +193,7 @@ func ExecCommand(c *Command) (*Result) {
 		}
 		wg.Done()
 	} ()
-	_, errStderr = io.CopyN(stderr, stderrIn, c.max_reply)
+	_, errStderr = io.CopyN(stderr, stderrIn, maxReply)
 	if errStderr == io.EOF {
 		errStderr = nil
 	} else {
