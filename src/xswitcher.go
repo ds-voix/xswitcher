@@ -1816,7 +1816,7 @@ func serve() {
 				dropKey(event)
 			}
 		case event = <- keyboardEvents:
-			if event.code < 0 || event.code > 767 { // Fuse against out-of-bounds: in old times there was need in.
+			if event.code > 767 { // Upper bound of key_name[]; the field is uint16, so `code < 0` was always false.
 				fmt.Printf("!!! Invalid event code: %d\n", event.code);
 			} else {
 				if *TEST_MODE {
