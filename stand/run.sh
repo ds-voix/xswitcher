@@ -4,8 +4,9 @@
 # the emitted EV_KEY stream; phase 12 checks the X11 branch (XkbLockGroup) on the live server;
 # phase 13 checks that re-creating an already attached device node cannot start a second reader;
 # phase 14 checks that a device the scan skips does not keep its descriptor open.
-# Phases X26-X29 check what an external Exec hook is handed: the typed word as text (issue #5) and,
-# with SendBuffer = "CLIPBOARD", the text of a live X selection owned by a second process.
+# Phases X26-X30 check what an external Exec hook is handed: the typed word as text (issue #5), the
+# text of a live X selection owned by a second process (SendBuffer = "CLIPBOARD"), and that neither
+# the hook's input ever reaches the daemon's own -v log.
 # Requires: docker run --privileged, uinput module loaded on the host kernel.
 set -u
 cd /w
@@ -18,8 +19,8 @@ TOTAL=0
 # "ALL GREEN" is only meaningful together with the number of checks behind it: a phase
 # that aborts early (or gets commented out while debugging) must not look like a pass.
 # Keep this in sync with the number of check() calls below
-# (14 lifecycle/stream + 4 SEQ tail + 29 X11 branch + 6 single-reader + 1 descriptor + 2 clipboard hook).
-EXPECT=56
+# (14 lifecycle/stream + 4 SEQ tail + 29 X11 branch + 6 single-reader + 1 descriptor + 3 clipboard hook).
+EXPECT=57
 
 say() { printf '%-46s %s\n' "$1" "${2:-}"; }
 check() { # check <name> <0|1>
@@ -483,7 +484,7 @@ GOT_XXX="$(cat /tmp/xxx 2>/dev/null)"
 }
 kill $HK_PID 2>/dev/null
 
-# X28-X29: issue #5, the half a keyboard buffer cannot serve. A translation hook is meant to receive
+# X28-X30: issue #5, the half a keyboard buffer cannot serve. A translation hook is meant to receive
 # what the user *selected*, and a selection made with the mouse never reaches xswitcher at all -- the
 # daemon only sees keystrokes. SendBuffer = "CLIPBOARD" pulls the text off the X CLIPBOARD selection
 # instead. Reading needs a real owner: clipboard hands the selection over to nobody when the owner
@@ -525,6 +526,17 @@ GOT_CLIP="$(cat /tmp/xxxc 2>/dev/null)"
     echo "  --- holder build ---"; tail -3 /tmp/cliphold_build.log | sed 's/^/  /'
     echo "  --- daemon output ---"; grep -Ei "Exec|Hook1|clipboard" /tmp/clip.log | tail -8 | sed 's/^/  /'
 }
+# X30: the same -v run must not have written that text into its own log. The Exec trace line used to be
+# `fmt.Printf("Exec: %v %v\n", c, CTRL_WORD)`, and %v renders a []byte as its decimal values, so the log
+# carried the whole payload as "99 108 105 112 45 116 101 120 116" -- one decode step from plain text,
+# in a file systemd journals for every user of the machine. The line now reports the call and stdin's
+# size. Both halves are checked: the new shape present, the byte list absent (grep for the literal text
+# would pass vacuously, since %v never printed it as words).
+grep -q "stdin=9B" /tmp/clip.log; CLIP_SHAPE=$?
+grep -q "99 108 105 112 45 116 101 120 116" /tmp/clip.log; CLIP_BODY=$?
+[ "$CLIP_SHAPE" = "0" ] && [ "$CLIP_BODY" != "0" ]; check "X30 the -v trace describes the Exec call, not its input" "$?"
+[ "$CLIP_SHAPE" != "0" ] && say "  Exec trace line:" "no stdin=9B in /tmp/clip.log, the shape check proves nothing"
+[ "$CLIP_BODY" = "0" ] && { echo "  --- payload seen in the log ---"; grep -n "99 108 105 112" /tmp/clip.log | head -2 | sed 's/^/  /'; }
 kill $CLIP_PID 2>/dev/null
 kill $CLIP_HOLD 2>/dev/null
 

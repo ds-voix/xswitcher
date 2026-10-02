@@ -1539,7 +1539,11 @@ func Exec(A *TAction) {
 
 	
 	if *VERBOSE || *DEBUG {
-		fmt.Printf("Exec: %v %v\n", c, CTRL_WORD)
+		// The struct carries StdIn, so printing it whole would put the text a hook was handed -- and
+		// since "CLIPBOARD" that text is whatever the user copied last -- into the log. Describe the
+		// call and the size of its input instead; the modifier state is not user text and stays.
+		fmt.Printf("Exec: %q args=%v shell=%v dir=%q timeout=%v wait=%v stdin=%dB ctrl=%v\n",
+			c.Command, c.Args, c.UseShell, c.Set_dir, c.Timeout, !c.No_wait, len(c.StdIn), CTRL_WORD)
 	}
 	r := exec.ExecCommand(&c)
 
