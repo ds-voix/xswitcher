@@ -17,7 +17,7 @@ TOTAL=0
 # that aborts early (or gets commented out while debugging) must not look like a pass.
 # Keep this in sync with the number of check() calls below
 # (14 lifecycle/stream + 4 SEQ tail + 19 X11 branch + 6 single-reader + 1 descriptor).
-EXPECT=44
+EXPECT=47
 
 say() { printf '%-46s %s\n' "$1" "${2:-}"; }
 check() { # check <name> <0|1>
@@ -342,6 +342,34 @@ grep -q "Language: -1 >> 2" /tmp/managed.log && grep -q "Language: 0 >> 0" /tmp/
 [ "$SRV13" = "0" ] && [ "$LOG13" = "0" ]; check "X17 Switch() wrapped group 2 to 0 on the live server" "$?"
 kill $SNIFF13 2>/dev/null
 kill $MG_PID 2>/dev/null
+
+# X18-X20: a Layouts list that does not begin at group 0. Switch() stepped with `next = l + 1`,
+# which is a group VALUE, and then used it as an INDEX into the very same list: on group 1 of
+# Layouts = [1, 2] it computed next = 2, wrapped it by `next >= len(Layouts)` and selected
+# Layouts[0] = 1 -- the group it was already on, so the switch asked for nothing.
+# Negative control, measured on the previous tip: the log reads "Language: -1 >> 1" then
+# "Language: 1 >> 1" and /tmp/xgroup stays on group 1.
+sed '/^\[Action\.CyclicSwitch\]/,/^\[/ s/^\s*Layouts = \[0, 1\]/       Layouts = [1, 2]/' /tmp/x11.conf > /tmp/cycle.conf
+CY_SED=$(grep -c "Layouts = \[1, 2\]" /tmp/cycle.conf)
+[ "$CY_SED" = "1" ]; check "X18 the cycle config really lists [1, 2]" "$?"
+[ "$CY_SED" != "1" ] && say "  widened=$CY_SED:" "the next two checks prove nothing"
+/tmp/xgroup set 1 >/dev/null 2>&1          # the second layout: listed, but not the list head
+/tmp/xswitcher -v -c /tmp/cycle.conf >/tmp/cycle.log 2>&1 &
+CY_PID=$!
+sleep 2
+python3 stand/source_key.py play "$SRC" "ENTER"   # Drop, so the run starts from an empty buffer
+sleep 0.5
+python3 stand/source_key.py play "$SRC" "H,E,L,L,O,PAUSE"
+sleep 3
+grep -q "Language: -1 >> 1" /tmp/cycle.log && grep -q "Language: 2 >> 2" /tmp/cycle.log; CY_LOG=$?
+[ "$CY_LOG" = "0" ]; check "X19 Switch() advanced group 1 to the next entry of [1, 2]" "$?"
+[ "$CY_LOG" != "0" ] && { echo "  --- cycle daemon output ---"; grep -E "Language|RETYPE" /tmp/cycle.log | tail -6 | sed 's/^/  /'; }
+/tmp/xgroup get until 2 3 >/dev/null; check "X20 the live server is on group 2 after that switch" "$?"
+kill $CY_PID 2>/dev/null
+# Group 2 is outside [ActionKeys] Layouts = [0, 1], so leaving the server there would hand phase 13
+# an unmanaged layout: checkLanguageId() drops the buffers on every key and the daemon emits nothing,
+# which is exactly the empty stream D1/D4/D6 reported. Put the server back where phase 12 left it.
+/tmp/xgroup set 0 >/dev/null 2>&1
 
 echo "--- 13. the source node re-created under the same path stays single-reader ---"
 # The inotify handler attaches whatever node appears in /dev/input, and an open fd survives the

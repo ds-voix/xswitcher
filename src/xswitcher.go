@@ -1246,24 +1246,30 @@ func RetypeWord(A *TAction) {
 	}
 }
 
+// nextLayout returns the layout that follows ref inside the cyclic list. Switch() stepped with
+// `next = l + 1`, which is the group VALUE used later as a list INDEX, so only a list starting at
+// group 0 cycled: with Layouts = [1, 2] and the server on group 1 it computed next = 2, wrapped it
+// by `next >= len(Layouts)` and re-selected Layouts[0] = 1 -- the group it had just left. Walking
+// positions keeps the shipped [0, 1] answers identical and makes [1, 2] cycle 1 >> 2 >> 1.
+func nextLayout(ref int, layouts []int) int {
+	for i, l := range layouts {
+		if l == ref {
+			return layouts[(i + 1) % len(layouts)]
+		}
+	}
+	return layouts[0] // a group the list does not name: start from its beginning, as before
+}
+
 // ToDo: newWord() | dropBuffers() must be implemented here in "smart" way.
 // Nested action: leave buffers as is. Or implement extra option "what to do with buffers".
 // Single action: drop. Or be smarter and remember the layout inside key sequences...
 func Switch(A *TAction) {
-	next := 0
-	l := Language(-1)
-
-	for i := 0; i < len(A.Layouts); i++ {
-		if l == A.Layouts[i] {
-			next = l + 1
-		}
+	if len(A.Layouts) == 0 { // A.Layouts[0] below would panic and the daemon would die on this key
+		fmt.Printf("Switch warning: the action lists no Layouts to cycle through\n")
+		return
 	}
 
-	if next >= len(A.Layouts) {
-		next = 0
-	}
-
-	Language(A.Layouts[next])
+	Language(nextLayout(Language(-1), A.Layouts))
 
 	CTRL["WORD"] = true
 }
