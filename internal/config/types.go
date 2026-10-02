@@ -23,7 +23,7 @@ type TKeyboard struct {
 
 // TActionKeys lists the key names that trigger layout switching and word actions.
 type TActionKeys struct {
-	Layouts   []int    `default:"[0,1]"`
+	Layouts   []int `default:"[0,1]"`
 	Add       []string
 	Drop      []string
 	Test      []string
@@ -41,9 +41,9 @@ type TWindowClass struct {
 
 // TActions holds the global action parameters plus custom action chains.
 type TActions struct {
-	SeqLength     int                 `default:"8"`
-	WordChars     string              `default:"(^([0-9A-Z=-]|GRAVE|APOSTROPHE|SEMICOLON|[LR]_BRACE|COMMA|DOT|(BACK)?SLASH|KP[0-9]):0$)"`
-	WordHead      string              `default:"(^([0-9A-Z]|GRAVE|APOSTROPHE|SEMICOLON|[LR]_BRACE|COMMA|DOT|(BACK)?SLASH|KP[0-9]):1$)"`
+	SeqLength     int    `default:"8"`
+	WordChars     string `default:"(^([0-9A-Z=-]|GRAVE|APOSTROPHE|SEMICOLON|[LR]_BRACE|COMMA|DOT|(BACK)?SLASH|KP[0-9]):0$)"`
+	WordHead      string `default:"(^([0-9A-Z]|GRAVE|APOSTROPHE|SEMICOLON|[LR]_BRACE|COMMA|DOT|(BACK)?SLASH|KP[0-9]):1$)"`
 	NewWord       []string
 	NewSentence   []string
 	Compose       []string
@@ -54,15 +54,15 @@ type TActions struct {
 // TAction defines a single named action (layout switch, exec, chain, etc.).
 type TAction struct {
 	Action      []string
-	Layout      int      `default:"-1"`
+	Layout      int `default:"-1"`
 	Layouts     []int
 	Exec        string
-	Timeout     int      `default:"100"`
-	Wait        bool     `default:"false"`
-	SendBuffer  string   `default:"WORD"`
-	UseShell    bool     `default:"true"`
+	Timeout     int    `default:"100"`
+	Wait        bool   `default:"false"`
+	SendBuffer  string `default:"WORD"`
+	UseShell    bool   `default:"true"`
 	Directory   string
-	CleanEnv    bool     `default:"true"`
+	CleanEnv    bool `default:"true"`
 	Environment []string
 	UID         string
 	GID         string
@@ -70,12 +70,12 @@ type TAction struct {
 
 // TWayland carries Wayland-specific bypass and layout keys.
 type TWayland struct {
-	BypassX bool     `default:"false"`
+	BypassX bool `default:"false"`
 	Layout0 []string
 	Layout1 []string
 	Layout2 []string
 	Layout3 []string
-	Delay   int      `default:"50"`
+	Delay   int `default:"50"`
 }
 
 // TSequence is a compiled rule sequence (runtime only, not serialised).
