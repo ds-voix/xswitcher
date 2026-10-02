@@ -854,7 +854,9 @@ func getActiveWindowId() (idChanged bool) { // _Ctype_Window == uint32
 	if C.XGetClassHint(display, ActiveWindowId, x_class) > 0 { // "VirtualBox Machine"
 		if ActiveWindowClass != C.GoString(x_class.res_name) {
 			ActiveWindowClass = C.GoString(x_class.res_name)
-			fmt.Println("=", ActiveWindowClass)
+			if *VERBOSE {
+				fmt.Println("=", ActiveWindowClass)
+			}
 		}
 	} else {
 		if C.XGetClassHint(display, ActiveWindowId - 1, x_class) > 0 { // https://antofthy.gitlab.io/info/X/WindowID.txt
@@ -862,10 +864,14 @@ func getActiveWindowId() (idChanged bool) { // _Ctype_Window == uint32
 			// Typically for GTK the parent window is 1 less than the focus window ... But there is no gurantee that the ID is one less.
 			if ActiveWindowClass != C.GoString(x_class.res_name) {
 				ActiveWindowClass = C.GoString(x_class.res_name)
-				fmt.Println("*", ActiveWindowClass)
+				if *VERBOSE {
+					fmt.Println("*", ActiveWindowClass)
+				}
 			}
 		} else {
-			fmt.Println("Empty ActiveWindowClass. M.b. gnome \"window\"?")
+			if *DEBUG {
+				fmt.Println("Empty ActiveWindowClass. M.b. gnome \"window\"?")
+			}
 		}
 	}
 	if C.xerror == C.True { // ??? Is there some action needed?
@@ -1648,14 +1654,18 @@ func connectEvents(connectPath string) {
 			continue
 		}
 		if dev.Name == keybd_event.DeviceName { // Own output would be read back as input
-			fmt.Printf("- %s:\t%s (own virtual keyboard)\n", dev.Path, dev.Name)
+			if *VERBOSE {
+				fmt.Printf("- %s:\t%s (own virtual keyboard)\n", dev.Path, dev.Name)
+			}
 			continue
 		}
 		attachedMu.Lock()
 		reading := attached[dev.Path]
 		attachedMu.Unlock()
 		if reading { // A reader for this path is already running
-			fmt.Printf("- %s:\t%s (already attached)\n", dev.Path, dev.Name)
+			if *VERBOSE {
+				fmt.Printf("- %s:\t%s (already attached)\n", dev.Path, dev.Name)
+			}
 			continue
 		}
 		skip := true
@@ -1670,7 +1680,9 @@ func connectEvents(connectPath string) {
 			// Left to itself it stays open until the garbage collector finalizes d: measured
 			// with GOGC=off, three bypassed devices meant three held fds.
 			_ = d.Close()
-			fmt.Printf("- %s:\t%s\n", dev.Path, dev.Name)
+			if *VERBOSE {
+				fmt.Printf("- %s:\t%s\n", dev.Path, dev.Name)
+			}
 			continue
 		}
 
@@ -1684,13 +1696,17 @@ func connectEvents(connectPath string) {
 				attachedMu.Unlock()
 				go events(d)
 				skip = false
-				fmt.Printf("  %s:\t%s\n", dev.Path, dev.Name)
+				if *VERBOSE {
+					fmt.Printf("  %s:\t%s\n", dev.Path, dev.Name)
+				}
 				break
 			}
 		}
 		if skip { // no EV_KEY capability: the reader never took d, so this is ours to close
 			_ = d.Close()
-			fmt.Printf("x %s:\t%s\n", dev.Path, dev.Name)
+			if *VERBOSE {
+				fmt.Printf("x %s:\t%s\n", dev.Path, dev.Name)
+			}
 		}
 	}
 	return
