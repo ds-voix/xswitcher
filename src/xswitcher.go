@@ -1395,6 +1395,19 @@ func setWindowActions() {
 	return
 }
 
+// sortedSeqNames returns the keys of an ActSeq map in a fixed (lexicographic) order. Range over a map
+// yields keys in a randomized order, and the ActSeq firing loop has no break: several rules can match
+// the same event and each doAction mutates the shared WORD/EXTRA/COMPOSE buffers, so an unordered
+// range made the response to a given keystroke depend on Go's map seed. Sorting makes it reproducible.
+func sortedSeqNames(seq map[string]TSequences) []string {
+	names := make([]string, 0, len(seq))
+	for name := range seq {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 func testAction(t *TSequences) bool {
 TEST:
 	for _, test := range *t {
@@ -1511,7 +1524,8 @@ func doWindowActions() {
 		newWord()
 		return
 	}
-	for name, act := range ActSeq { // Is there some reason to do more then 1 action?
+	for _, name := range sortedSeqNames(ActSeq) { // Is there some reason to do more then 1 action?
+		act := ActSeq[name]
 		if testAction(&act) {
 			if *VERBOSE || *DEBUG {
 				fmt.Printf("%s: %s\n", name, TAIL.String()[1:])
