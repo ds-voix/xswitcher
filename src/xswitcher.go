@@ -1091,12 +1091,13 @@ func Language(lang int) (int) {
 			CTRL["WORD"] = true
 		}
 		layout = C.uint(lang)
-		// XkbLockGroup returns a Status. Measured on the stand: locking a group that really is a
-		// change returns 0, while asking for the group the server already holds returns 1. So a
-		// non-zero result means "the request did not go through as a change", not "the layout is
-		// wrong" - the re-read below is what reports the group actually in effect.
+		// XkbLockGroup returns a Status, and its meaning here is not established. Measured on the
+		// stand: locking group 0 answered 1 in runs where XkbGetState right after read group 0 back -
+		// a request that plainly took effect - while locking group 1 answered 0. So a non-zero answer
+		// is not "the switch failed" and must not be reported as that. Which group is in effect is
+		// what the re-read below says; this line only surfaces the answer the call gave.
 		if rc := int(C.XkbLockGroup(display, C.XkbUseCoreKbd, layout)); rc != 0 && (*VERBOSE || *DEBUG) {
-			fmt.Printf("Language: XkbLockGroup(%d) reported %d\n", lang, rc)
+			fmt.Printf("Language: XkbLockGroup(%d) answered %d\n", lang, rc)
 		}
 		if rc := int(C.XkbGetState(display, C.XkbUseCoreKbd, state)); rc != 0 && (*VERBOSE || *DEBUG) {
 			fmt.Printf("Language: XkbGetState(after) returned %d\n", rc)
