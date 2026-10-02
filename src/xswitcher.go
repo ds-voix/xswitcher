@@ -1067,11 +1067,12 @@ func Language(lang int) (int) {
 			CTRL["WORD"] = true
 		}
 		layout = C.uint(lang)
-		// XkbLockGroup returns Success(0) or an error code. A non-zero result means the group did not
-		// switch, which the re-read below would otherwise report as "current group" without saying the
-		// switch failed. The full semantic fix (locking by read-back target, not blind +1) is issue #14.
+		// XkbLockGroup returns a Status. Measured on the stand: locking a group that really is a
+		// change returns 0, while asking for the group the server already holds returns 1. So a
+		// non-zero result means "the request did not go through as a change", not "the layout is
+		// wrong" - the re-read below is what reports the group actually in effect.
 		if rc := int(C.XkbLockGroup(display, C.XkbUseCoreKbd, layout)); rc != 0 && (*VERBOSE || *DEBUG) {
-			fmt.Printf("Language: XkbLockGroup(%d) returned %d\n", lang, rc)
+			fmt.Printf("Language: XkbLockGroup(%d) reported %d\n", lang, rc)
 		}
 		if rc := int(C.XkbGetState(display, C.XkbUseCoreKbd, state)); rc != 0 && (*VERBOSE || *DEBUG) {
 			fmt.Printf("Language: XkbGetState(after) returned %d\n", rc)
