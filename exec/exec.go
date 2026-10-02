@@ -130,52 +130,32 @@ func ExecCommand(c *Command) (*Result) {
 		return r
 	}
 
-	// Wait for the process to finish or kill it after a timeout (whichever happens first):
+	// Terminate the child - and its whole process group, thanks to Setpgid - if it overruns the
+	// timeout. The previous version polled cmd.ProcessState in a goroutine while cmd.Wait() wrote it
+	// (a data race that `go test -race` flags), and every "if cmd == nil" guard was dead code because
+	// cmd is a non-nil local. A done channel closed on return replaces both: the killer only reads the
+	// pid (an int copy) and done, so it never touches the reaped cmd or the reused pgid after Wait.
+	pid := cmd.Process.Pid
+	done := make(chan struct{})
+	defer close(done)
 	if c.Timeout > 0 {
-		go func(cmd *exec.Cmd, pid int) { // !!! panic: runtime error: invalid memory address or nil pointer dereference
-			for i := 0; i < int(c.Timeout * 10); i++ {
-				time.Sleep(time.Second / 10)
-				if cmd == nil { return }
-				if cmd.ProcessState != nil {
-					break
-				}
+		go func() {
+			select {
+			case <-done:
+				return
+			case <-time.After(time.Duration(c.Timeout * float64(time.Second))):
 			}
-
-			if cmd.ProcessState == nil {
-//				cmd.Process.Signal(syscall.SIGTERM) // No, such a method terminates only this PID, leaving orphans!
-				if cmd == nil { return }
-				syscall.Kill(-pid, syscall.SIGTERM) // !!! [signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0x7c1ef0]
-				time.Sleep(time.Second / 2)
-				if cmd == nil { return }
+			syscall.Kill(-pid, syscall.SIGTERM)
+			select {
+			case <-done: // the SIGTERM already let cmd.Wait() reap it
+			case <-time.After(time.Second / 2):
 				syscall.Kill(-pid, syscall.SIGKILL)
 			}
-		} (cmd, cmd.Process.Pid)
-	} else if c.Timeout == 0 { // Wait for interrupt
-		go func(cmd *exec.Cmd, pid int) {
-//			defer waitWorkers.Done()
-			for {
-				time.Sleep(time.Second / 50)
-				if cmd == nil { return }
-				if cmd.ProcessState != nil {
-					break
-				}
-/*
-				if interrupt {
-					break
-				}
-*/
-			}
-
-			if cmd.ProcessState == nil {
-//				cmd.Process.Signal(syscall.SIGTERM) // No, such a method terminates only this PID, leaving orphans!
-				if cmd == nil { return }
-				syscall.Kill(-pid, syscall.SIGTERM) // !!! [signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0x7c1ef0]
-				time.Sleep(time.Second / 2)
-				if cmd == nil { return }
-				syscall.Kill(-pid, syscall.SIGKILL)
-			}
-		} (cmd, cmd.Process.Pid)
+		}()
 	}
+	// Timeout == 0 means no deadline: cmd.Wait() below simply blocks until the child exits on its own.
+	// The old zero-timeout goroutine only busy-polled the racy ProcessState and its kill path was
+	// unreachable (guarded by ProcessState == nil after Wait already set it), so it is dropped.
 
 	// https://blog.kowalczyk.info/article/wOYk/advanced-command-execution-in-go-with-osexec.html
 	maxReply := c.max_reply
