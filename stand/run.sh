@@ -16,8 +16,8 @@ TOTAL=0
 # "ALL GREEN" is only meaningful together with the number of checks behind it: a phase
 # that aborts early (or gets commented out while debugging) must not look like a pass.
 # Keep this in sync with the number of check() calls below
-# (14 lifecycle/stream + 4 SEQ tail + 19 X11 branch + 6 single-reader + 1 descriptor).
-EXPECT=50
+# (14 lifecycle/stream + 4 SEQ tail + 27 X11 branch + 6 single-reader + 1 descriptor).
+EXPECT=52
 
 say() { printf '%-46s %s\n' "$1" "${2:-}"; }
 check() { # check <name> <0|1>
@@ -406,6 +406,41 @@ kill $SNIFF14 2>/dev/null
 [ "$RETAINED" = "0" ]; check "X23 the replay left the server off the layout the word came from" "$?"
 [ "$RETAINED" != "0" ] && { echo "  --- #14 daemon output ---"; grep -E "Language|RETYPE" /tmp/typed.log | tail -5 | sed 's/^/  /'; }
 kill $TYPED_PID 2>/dev/null
+/tmp/xgroup set 0 >/dev/null 2>&1                     # phase 13 needs a managed layout again
+
+# X24-X25: [Keyboard] WipeBySelection (P1-6). The shipped wipe asks the application for `wipe`
+# separate edits, one per Keyboard.Delay, and an editor that coalesces or loses any of them keeps a
+# piece of the word -- the replay then duplicates that remainder. The other shape selects the
+# characters (Shift held while the cursor steps left once per character) and deletes the selection
+# with ONE BackSpace, which is the single edit every text widget already performs, so a lost step
+# only shortens a selection instead of leaving a half-deleted word behind.
+# What the stand proves is the EMITTED EV_KEY stream, not that some particular Chrome or terminal
+# honors a Shift+Left made through the keyboard -- which is why the config default stays false.
+# Negative control, measured with the two Go files reverted to the previous tip: 51 of 52 green,
+# X24 among them (the inserted config line does not depend on the code) and X25 the only red one,
+# where analyze reports "one BackSpace ... got 5" and "Shift presses 0" -- the burst is still what
+# leaves the daemon.
+sed '/^\[Keyboard\]/,/^\[/ s|^\s*Delay = 5 .*$|&\n  WipeBySelection = true|' /tmp/x11.conf > /tmp/sel.conf
+SEL_SED=$(grep -c "WipeBySelection = true" /tmp/sel.conf)
+[ "$SEL_SED" = "1" ]; check "X24 the config really turns WipeBySelection on" "$?"
+[ "$SEL_SED" != "1" ] && say "  inserted=$SEL_SED:" "the next check proves nothing"
+/tmp/xswitcher -v -c /tmp/sel.conf >/tmp/sel.log 2>&1 &
+SEL_PID=$!
+sleep 2
+python3 stand/source_key.py play "$SRC" "ENTER"       # Drop, so the run starts from an empty buffer
+sleep 0.5
+TSV15=/tmp/keybd15.tsv
+rm -f "$TSV15"
+python3 stand/sniff.py "keybd interface" "$TSV15" 15 >/tmp/sniff15.log 2>&1 &
+SNIFF15=$!
+sleep 1
+python3 stand/source_key.py play "$SRC" "H,E,L,L,O,PAUSE"
+sleep 3
+python3 stand/analyze.py "$TSV15" "H,E,L,L,O" none selection >/tmp/a15.log 2>&1; A15=$?
+kill $SNIFF15 2>/dev/null
+[ "$A15" = "0" ]; check "X25 the wipe is one selection plus one BackSpace, not five BackSpaces" "$?"
+[ "$A15" != "0" ] && { echo "  --- WipeBySelection stream ---"; tail -14 /tmp/a15.log | sed 's/^/  /'; echo "  --- daemon output ---"; grep -E "BACKSPACE|RETYPE" /tmp/sel.log | tail -4 | sed 's/^/  /'; }
+kill $SEL_PID 2>/dev/null
 /tmp/xgroup set 0 >/dev/null 2>&1                     # phase 13 needs a managed layout again
 
 echo "--- 13. the source node re-created under the same path stays single-reader ---"

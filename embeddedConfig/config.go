@@ -13,6 +13,13 @@ const Toml string = `
 
 [Keyboard]
   Delay = 5 # Delay in the virtual keyboard before sending the next event
+  # How "RetypeWord" removes the word it is about to type again:
+  # false - press BackSpace once per character, which every application has always understood;
+  # true  - select the characters with Shift+Left and delete the selection with a single BackSpace,
+  #         so the application performs ONE edit instead of one per character and cannot drop half of
+  #         them while busy. Needs an application that honors a Shift-selection made through the
+  #         keyboard, which is exactly what a remote/emulated input sometimes does not do.
+  WipeBySelection = false
 
 [Templates] # "@name@" to simplify expressions
  # Words can consist of these chars (regex) !!! There must be only "canonic" key names, or regex will fail to match !!!

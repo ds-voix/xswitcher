@@ -1,11 +1,14 @@
 #!/usr/bin/python3
 """Verify the EV_KEY stream xswitcher emits on its own virtual keyboard.
 
-usage: analyze.py <tsv> <word-csv> <shortcut-digit|none>
+usage: analyze.py <tsv> <word-csv> <shortcut-digit|none> [wipe]
   <tsv>              rows: time<TAB>code<TAB>value, as written by sniff.py
   <word-csv>         the word that was typed, e.g. "H,E,L,L,O"; "" for no word
   <shortcut-digit>   which [Wayland] Layout<N> shortcut is expected, or "none" when the
                      daemon switches layouts through XkbLockGroup instead of a shortcut
+  [wipe]             "selection" to expect the [Keyboard] WipeBySelection shape of the wipe:
+                     Shift held while the cursor moves left once per character, then a single
+                     BackSpace deleting the selection - instead of one BackSpace per character
 
 The expectations are derived from the word, so the same file checks every phase of
 the stand: BackSpace count == word length, then the word replayed down/up.
@@ -16,6 +19,7 @@ import sys
 from evdev import ecodes as e
 
 BACKSPACE, META = 14, 125
+SHIFT, LEFT = 42, 105
 TRIGGER, TRIGGER_UP = e.KEY_PAUSE, 0
 
 events = []
@@ -26,6 +30,7 @@ with open(sys.argv[1]) as fh:
 
 word = [t for t in (sys.argv[2].split(",") if len(sys.argv) > 2 and sys.argv[2] else []) if t]
 via_x = len(sys.argv) > 3 and sys.argv[3] == "none"
+selection = len(sys.argv) > 4 and sys.argv[4] == "selection"
 digit = None if via_x else getattr(e, "KEY_%s" % sys.argv[3])
 
 SHORTCUT = [] if via_x else [(META, 1), (digit, 1), (digit, 0), (META, 0)]
@@ -62,8 +67,22 @@ bs_downs = streams.get(BACKSPACE, []).count(1)
 
 if word:
     check("E1 emitted stream is not empty", len(events) > 0, "%d events" % len(events))
-    check("E3 %d BackSpace presses for '%s'" % (len(word), "".join(word)), bs_downs == len(word),
-          "got %d" % bs_downs)
+    if selection:
+        left_downs = streams.get(LEFT, []).count(1)
+        shift_downs = streams.get(SHIFT, []).count(1)
+        bs_at = next((i for i, ev in enumerate(events) if ev[1] == BACKSPACE), -1)
+        shift_up_at = max((i for i, ev in enumerate(events) if ev[1] == SHIFT and ev[2] == 0), default=-1)
+        check("E3s one BackSpace deletes the selection for '%s'" % "".join(word), bs_downs == 1,
+              "got %d" % bs_downs)
+        check("E3s Shift went down and up once", shift_downs == 1 and shift_up_at >= 0,
+              "shift presses %d" % shift_downs)
+        check("E3s %d Shift+Left steps select '%s'" % (len(word), "".join(word)),
+              left_downs == len(word), "got %d" % left_downs)
+        check("E3s the selection is released before the delete", bs_at >= 0 and shift_up_at < bs_at,
+              "shift-up@%d backspace@%d" % (shift_up_at, bs_at))
+    else:
+        check("E3 %d BackSpace presses for '%s'" % (len(word), "".join(word)), bs_downs == len(word),
+              "got %d" % bs_downs)
     if via_x:
         # The X11 branch changes the layout inside the X server, so no shortcut keys appear.
         check("E4 no layout shortcut emitted (XkbLockGroup path)", META not in streams)

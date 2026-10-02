@@ -92,6 +92,12 @@ type TScanDevices struct {
 
 type TKeyboard  struct {
 	Delay int       `default:"5"`
+	// Wipe the word by selecting its characters and deleting the selection, instead of pressing
+	// BackSpace once per character. Off by default: the burst is what every application has always
+	// understood, while selection handling is the application's own behavior. The `default:"..."`
+	// tags in this project are documentation only - nothing applies them - so Go's zero false IS the
+	// default when a config omits this key.
+	WipeBySelection bool
 }
 
 type TActionKeys struct {
@@ -1214,11 +1220,27 @@ func RetypeWord(A *TAction) {
 	}
 
 	// Clean the word
+	wipe := count - COMPOSE
 	if *VERBOSE {
-		fmt.Printf("BACKSPACE: %v - %v = %v\n", count, COMPOSE, count - COMPOSE)
+		fmt.Printf("BACKSPACE: %v - %v = %v\n", count, COMPOSE, wipe)
 	}
-	for i := 0; i < count - COMPOSE; i++ {
+	if Keyboard.WipeBySelection && wipe > 0 {
+		// P1-6: the burst below asks the application for `wipe` separate edits, one per
+		// Keyboard.Delay, and an editor that coalesces or loses any of them keeps part of the word -
+		// the replay then duplicates that remainder. Selecting the characters and deleting the
+		// selection is one edit, and typing over a selection is what every text widget already does
+		// on the first BackSpace, so a dropped keystroke shortens a selection instead of leaving a
+		// half-deleted word behind.
+		sendKey(t_key{uint16(key_def["L_SHIFT"]), 1})
+		for i := 0; i < wipe; i++ {
+			pressKey(evdev.KEY_LEFT)
+		}
+		sendKey(t_key{uint16(key_def["L_SHIFT"]), 0})
 		pressKey(evdev.KEY_BACKSPACE)
+	} else {
+		for i := 0; i < wipe; i++ {
+			pressKey(evdev.KEY_BACKSPACE)
+		}
 	}
 
 	// Initial CTRL state
