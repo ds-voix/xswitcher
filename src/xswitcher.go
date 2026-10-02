@@ -55,6 +55,8 @@ import "C"
 import (
 	"xswitcher/embeddedConfig"
 	"xswitcher/exec"
+	cfg "xswitcher/internal/config"
+	"xswitcher/internal/ipc"
 	"xswitcher/scancodes"
 	flag "github.com/spf13/pflag"       // CLI keys like python's "argparse". More flexible, comparing with "gnuflag"
 	"fmt"
@@ -70,7 +72,6 @@ import (
 	"syscall"
 	"time"
 //	"unsafe"
-	"github.com/pelletier/go-toml"      // Actual TOML parser
 //	"github.com/gvalkov/golang-evdev"   // Keyboard and mouse events
 	// Refactored to holoplot/go-evdev:
 	"github.com/holoplot/go-evdev"      // Go support for the Linux evdev interface
@@ -81,89 +82,18 @@ import (
 	"golang.design/x/clipboard"
 )
 
-// Config
-type TScanDevices struct {
-	Test string     `default:"/dev/input/event0"`
-	Respawn int     `default:"30"`
-	Search string   `default:"/dev/input/event*"`
-	Bypass string   `default:"(?i)Video|Camera"`
-	BypassRE *(regexp.Regexp)
-}
-
-type TKeyboard  struct {
-	Delay int       `default:"5"`
-	// Wipe the word by selecting its characters and deleting the selection, instead of pressing
-	// BackSpace once per character. Off by default: the burst is what every application has always
-	// understood, while selection handling is the application's own behavior. The `default:"..."`
-	// tags in this project are documentation only - nothing applies them - so Go's zero false IS the
-	// default when a config omits this key.
-	WipeBySelection bool
-}
-
-type TActionKeys struct {
-	Layouts []int   `default:"[0,1]"`
-	Add []string
-	Drop []string
-	Test []string
-	StateKeys []string
-}
-
-type TWindowClass struct {
-	Regex string
-	re *(regexp.Regexp)
-	MouseClickDrops bool
-	Actions string
-}
-
-type TActions struct {
-	SeqLength int    `default:"8"`
-	WordChars string `default:"(^([0-9A-Z=-]|GRAVE|APOSTROPHE|SEMICOLON|[LR]_BRACE|COMMA|DOT|(BACK)?SLASH|KP[0-9]):0$)"`
-	WordHead string  `default:"(^([0-9A-Z]|GRAVE|APOSTROPHE|SEMICOLON|[LR]_BRACE|COMMA|DOT|(BACK)?SLASH|KP[0-9]):1$)"`
-	NewWord []string
-	NewSentence []string
-	Compose []string
-	TypeClipboard []string
-	Custom map[string][]string // >> TAction.Name
-}
-
-type TAction struct {
-	Action []string
-	Layout int `default:"-1"`
-	Layouts []int
-	// Exec options
-	Exec string
-	Timeout int       `default:"100"`
-	Wait bool         `default:"false"`
-	SendBuffer string `default:"WORD"`
-	UseShell bool     `default:"true"`
-	Directory string
-	CleanEnv bool     `default:"true"`
-	Environment []string 
-	UID string
-	GID string
-}
-
-type TWayland struct {
-	BypassX bool      `default:"false"`
-	Layout0 []string
-	Layout1 []string
-	Layout2 []string
-	Layout3 []string
-	Delay int         `default:"50"`
-}
-
-type TSequence struct {
-	OFF * regexp.Regexp
-	ON * regexp.Regexp
-	SEQ * regexp.Regexp
-	// Set while parsing for a rule whose chain ends in RetypeWord and whose "SEQ:" tail can
-	// match a varying number of key events. RetypeWord() takes the number of keys it must
-	// leave alone from the length of that match, so such a rule cannot compute it and does
-	// not fire at all (see testAction).
-	tailUnprovable bool
-}
-
-type TSequences []TSequence
+// Config types are defined in internal/config/types.go so the GUI binary
+// can import them without pulling in cgo/X11/evdev dependencies.
+// Type aliases keep existing code in this file compiling unchanged.
+type TScanDevices = cfg.TScanDevices
+type TKeyboard = cfg.TKeyboard
+type TActionKeys = cfg.TActionKeys
+type TWindowClass = cfg.TWindowClass
+type TActions = cfg.TActions
+type TAction = cfg.TAction
+type TWayland = cfg.TWayland
+type TSequence = cfg.TSequence
+type TSequences = cfg.TSequences
 
 // Scan-codes
 type t_key struct {
@@ -315,31 +245,19 @@ var (
 
 const winBufMax = 32 // LRU cap: a daemon running for months must not keep every closed window
 
-// actionsCustomHint sizes the initial capacity of Actions.Custom. The 4 preset keys are not custom,
-// but a config may carry fewer than 4 keys in total; `len(t) - 4` was then negative and `make`
-// panicked with "len out of range", turning a config typo into a crash. Only the capacity hint is
-// affected - the resulting map is the same either way.
-func actionsCustomHint(n int) int {
-	if n < 4 {
-		return 0
-	}
-	return n - 4
-}
-
 func config() {
 	var (
-		conf map [string]interface{}
 		conf_ []byte
-		err error
+		err   error
 	)
 	config_path := &CONFIG_PATH
 
 	if env_config, ok := os.LookupEnv("CONFIG"); ok {
 		*config_path = env_config
 	}
-	_ , *DEBUG = os.LookupEnv("DEBUG")
-	_ , *VERBOSE = os.LookupEnv("VERBOSE")
-	_ , *TEST_MODE = os.LookupEnv("TEST")
+	_, *DEBUG = os.LookupEnv("DEBUG")
+	_, *VERBOSE = os.LookupEnv("VERBOSE")
+	_, *TEST_MODE = os.LookupEnv("TEST")
 
 	F := flag.NewFlagSet("", flag.ContinueOnError)
 	config_path = F.StringP("conf", "c", *config_path, "Non-default config location")
@@ -367,214 +285,22 @@ func config() {
 	if *DEBUG {
 		fmt.Println(string(conf_))
 	}
-	if err := toml.Unmarshal(conf_, &conf); err != nil {
-		panic(fmt.Errorf("Config error: unable to parse config file:\n%s", err.Error()))
+
+	parsed, err := cfg.ParseTOML(conf_)
+	if err != nil {
+		panic(fmt.Errorf("Config error: %s", err.Error()))
 	}
 
-	for key, value := range conf {
-		switch key {
-		case "ScanDevices":
-			_ScanDevices, err := toml.Marshal(value)
-			if err != nil {
-				panic(fmt.Errorf("Config error: unable to parse [ScanDevices]:\n%s", err.Error()))
-			}
-			if err = toml.Unmarshal(_ScanDevices, &ScanDevices); err != nil {
-				panic(fmt.Errorf("Config error: unable to parse [ScanDevices]:\n%s", err.Error()))
-			}
-			if ScanDevices.BypassRE, err = regexp.Compile(ScanDevices.Bypass); err != nil {
-				panic(fmt.Errorf("Config error: unable to parse [ScanDevices]. Invalid regexp for \"Bypass\".\n%s", err.Error()))
-			}
+	// Copy parsed config into daemon globals.
+	ScanDevices = parsed.ScanDevices
+	Keyboard = parsed.Keyboard
+	Templates = parsed.Templates
+	ActionKeys = parsed.ActionKeys
+	WindowClasses = parsed.WindowClasses
+	Actions = parsed.Actions
+	ActionSet = parsed.ActionSet
+	Wayland = parsed.Wayland
 
-		case "Templates":
-			switch t := value.(type) {
-			case map[string]interface{}:
-				Templates = make(map [string]string, len(t))
-				for k, v := range t {
-					if _, err = regexp.Compile(v.(string)); err != nil {
-						panic(fmt.Errorf("Config error: unable to parse [Templates]. Invalid regexp for \"%s\".\n%s", k, err.Error()))
-					}
-					Templates[k] = v.(string)
-				}
-			default:
-				panic(fmt.Errorf("Config error: [Templates] must consist of \"name = string\" peers "))
-			}
-
-		case "ActionKeys":
-			_ActionKeys, err := toml.Marshal(value)
-			if err != nil {
-				panic(fmt.Errorf("Config error: unable to parse [ActionKeys]:\n%s", err.Error()))
-			}
-			if err = toml.Unmarshal(_ActionKeys, &ActionKeys); err != nil {
-				panic(fmt.Errorf("Config error: unable to parse [ActionKeys]:\n%s", err.Error()))
-			}
-
-		case "WindowClasses":
-			switch t := value.(type) {
-			case []map[string]interface{}:
-				for _, v := range t {
-					_WindowClass, err := toml.Marshal(v)
-					if err != nil {
-						panic(fmt.Errorf("Config error: unable to parse [[WindowClasses]]:\n%s", err.Error()))
-					}
-					class :=TWindowClass{}
-					if err = toml.Unmarshal(_WindowClass, &class); err != nil {
-						panic(fmt.Errorf("Config error: unable to parse [[WindowClasses]]:\n%s", err.Error()))
-					}
-
-					if class.Regex != "" {
-						class.re, err = regexp.Compile(class.Regex)
-						if err != nil {
-							panic(fmt.Errorf("Config error: unable to parse [[WindowClasses]]. Invalid regexp \"%s\".\n%s", class.Regex, err.Error()))
-						}
-					} else {
-						class.re = nil
-					}
-
-					if class.Actions != "" {
-						if class.Actions != "Actions" { // Too complecs for the first release.
-							panic(fmt.Errorf("Config error: Only one action set \"Actions\" is realised for [[WindowClasses]] in current version.\nUnable to  serve \"%s\"", class.Actions))
-						}
-					}
-					WindowClasses = append(WindowClasses, class)
-				}
-			default:
-				panic(fmt.Errorf("Config error: [[WindowClasses]] must be a slice of sections, not a single [WindowClasses] section"))
-			}
-
-		case "Actions":
-			switch t := value.(type) {
-			case map[string]interface{}:
-				Actions.Custom = make(map[string][]string, actionsCustomHint(len(t)))
-				for k, v := range t {
-					switch k {
-					case "SeqLength":
-						switch t := v.(type) {
-						case int64:
-							if (t < 1) || (t > 255) {
-								panic(fmt.Errorf("Config error: Actions.SeqLength must be integer betwen 1 and 255"))
-							}
-							Actions.SeqLength = int(t)
-						default:
-							panic(fmt.Errorf("Config error: Actions.SeqLength must be integer betwen 1 and 255"))
-						}
-					case "WordChars":
-						switch t := v.(type) {
-						case interface{}:
-							Actions.WordChars = t.(string)
-						default:
-							panic(fmt.Errorf("Config error: \"WordChars\" value must be string"))
-						}
-					case "WordHead":
-						switch t := v.(type) {
-						case interface{}:
-							Actions.WordHead = t.(string)
-						default:
-							panic(fmt.Errorf("Config error: \"WordHead\" value must be string"))
-						}
-					case "NewWord":
-						switch t := v.(type) {
-						case []interface{}:
-							for _, seq := range t {
-								Actions.NewWord = append(Actions.NewWord, seq.(string))
-							}
-						default:
-							panic(fmt.Errorf("Config error: \"NewWord\" value must be array of strings"))
-					}
-					case "NewSentence":
-						switch t := v.(type) {
-						case []interface{}:
-							for _, seq := range t {
-								Actions.NewSentence = append(Actions.NewSentence, seq.(string))
-							}
-						default:
-							panic(fmt.Errorf("Config error: \"NewSentence\" value must be array of strings"))
-					}
-					case "Compose":
-						switch t := v.(type) {
-						case []interface{}:
-							for _, seq := range t {
-								Actions.Compose = append(Actions.Compose, seq.(string))
-							}
-						default:
-							panic(fmt.Errorf("Config error: \"Compose\" value must be array of strings"))
-					}
-					case "TypeClipboard":
-						switch t := v.(type) {
-						case []interface{}:
-							for _, seq := range t {
-								Actions.TypeClipboard = append(Actions.TypeClipboard, seq.(string))
-							}
-						default:
-							panic(fmt.Errorf("Config error: \"TypeClipboard\" value must be array of strings"))
-					}
-					default:
-						if Action.MatchString(k) {
-							switch t := v.(type) {
-							case []interface{}:
-								name := strings.TrimLeft(ActionName.FindString(k), ".")
-								for _, seq := range t {
-									Actions.Custom[name] = append(Actions.Custom[name], seq.(string))
-								}
-							default:
-								panic(fmt.Errorf("Config error: \"Action.\" values must be arrays of strings"))
-							}
-						} else {
-							panic(fmt.Errorf("Config error: unknown key \"%s\" in [Actions] section", k))
-						}
-					}
-				}
-
-			default:
-				panic(fmt.Errorf("Config error: [Actions] must consist of \"name = value\" peers "))
-			}
-
-		case "Action":
-			switch t := value.(type) {
-			case map[string]interface{}:
-				ActionSet = make(map[string] TAction, len(t))
-				for key, value := range t {
-					_Action, err := toml.Marshal(value)
-					if err != nil {
-						panic(fmt.Errorf("Config error: unable to parse [Action.%s]:\n%s", key, err.Error()))
-					}
-					act := TAction{}
-					if err = toml.Unmarshal(_Action, &act); err != nil {
-						panic(fmt.Errorf("Config error: unable to parse [Action.%s]:\n%s", key, err.Error()))
-					}
-					ActionSet[key] = act
-				}
-			default:
-				panic(fmt.Errorf("Config error: [[WindowClasses]] must be a slice of sections, not a single [WindowClasses] section %T", t))
-			}
-
-		case "Keyboard":
-			_Keyboard, err := toml.Marshal(value)
-			if err != nil {
-				panic(fmt.Errorf("Config error: unable to parse [Keyboard]:\n%s", err.Error()))
-			}
-			if err = toml.Unmarshal(_Keyboard, &Keyboard); err != nil {
-				panic(fmt.Errorf("Config error: unable to parse [Keyboard]:\n%s", err.Error()))
-			}
-
-		case "Wayland":
-			_Wayland, err := toml.Marshal(value)
-			if err != nil {
-				panic(fmt.Errorf("Config error: unable to parse [Wayland]:\n%s", err.Error()))
-			}
-			if err = toml.Unmarshal(_Wayland, &Wayland); err != nil {
-				panic(fmt.Errorf("Config error: unable to parse [Wayland]:\n%s", err.Error()))
-			}
-
-		default:
-			panic(fmt.Errorf("Config error: unknown section name [%s]", key))
-		}
-	}
-	// Finally, check that ActionSet contains all Custom Actions
-	for key, _ := range Actions.Custom {
-		if _, ok := ActionSet[key]; !ok {
-			panic(fmt.Errorf("Config error: Action definition not found for \"Action.%s\"", key))
-		}
-	}
 	checkActionCycles()
 	collectManagedLayouts()
 }
@@ -753,7 +479,7 @@ func sequences() {
 				if tpl := SEQ.FindAllStringIndex(rule, -1); tpl != nil {
 					t := strings.TrimLeft(rule[ tpl[0][0] :tpl[0][1] ], " SEQ:")
 					if hasFreeQuantifier(t) {
-						seq.tailUnprovable = true
+						seq.TailUnprovable = true
 						fmt.Printf("Parse warning: the rule for \"Action.%s\" ends in the RetypeWord action, but its SEQ tail \"%s\" matches a varying number of key events. RetypeWord takes the number of the shortcut's own events from that match, so it wipes too few characters or none at all. The rule will not fire; write the tail as the exact chain, e.g. \"SEQ:(PAUSE:1,PAUSE:0)\".\n", key, t)
 					}
 				}
@@ -1558,11 +1284,11 @@ func setWindowActions() {
 	WC = nil
 	// Depending on WindowClass
 	for _, w := range WindowClasses {
-		if w.re != nil {
+		if w.RE != nil {
 			if ActiveWindowClass == "" { // Empty class name match empty regex
 				continue
 			} else {
-				if w.re.MatchString(ActiveWindowClass) {
+				if w.RE.MatchString(ActiveWindowClass) {
 					WC = &w
 					break
 				}
@@ -1609,7 +1335,7 @@ TEST:
 		}
 		if test.SEQ != nil {
 			if test.SEQ.MatchString(TAIL.String()[1:]) {
-				if test.tailUnprovable {
+				if test.TailUnprovable {
 					// The shortcut's own event count would be read off this match, and the match
 					// has no fixed length. Firing would wipe a number nobody asked for, so let the
 					// next rule of the same action try instead.
@@ -2048,6 +1774,21 @@ func main() {
 	keys() // Initialize key actions
 
 	connectEvents("") // Start keyloggers
+
+	// Start IPC server for GUI communication (Phase 1 MVP).
+	go func() {
+		sockPath := ipc.DefaultSocketPath
+		if envSock, ok := os.LookupEnv("XSWITCHER_SOCK"); ok {
+			sockPath = envSock
+		}
+		srv := ipc.NewServer(sockPath, nil, nil)
+		if err := srv.Start(); err != nil {
+			fmt.Printf("IPC server failed: %v\n", err)
+			return
+		}
+		// Server runs until process exit; no Stop() needed for daemon lifetime.
+		_ = srv
+	}()
 
 	// Attach virtual keyboard
 	kb, err = keybd_event.NewKeyBonding()

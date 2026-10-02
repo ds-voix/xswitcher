@@ -5,6 +5,7 @@ go 1.22.4
 replace github.com/micmonay/keybd_event => ./src/keybd_event/
 
 require (
+	fyne.io/fyne/v2 v2.4.5
 	github.com/fsnotify/fsnotify v1.7.0
 	github.com/gvalkov/golang-evdev v0.0.0-20220815104727-7e27d6ce89b6
 	github.com/holoplot/go-evdev v0.0.0-20240306072622-217e18f17db1
