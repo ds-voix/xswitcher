@@ -1053,14 +1053,23 @@ func Language(lang int) (int) {
 	state := new(C.struct__XkbStateRec)
 	layout := C.uint(0)
 
-	C.XkbGetState(display, C.XkbUseCoreKbd, state);
+	if rc := int(C.XkbGetState(display, C.XkbUseCoreKbd, state)); rc != 0 && (*VERBOSE || *DEBUG) {
+		fmt.Printf("Language: XkbGetState returned %d\n", rc)
+	}
 	if lang >= 0 {
 		if int(state.group) != lang {
 			CTRL["WORD"] = true
 		}
 		layout = C.uint(lang)
-		C.XkbLockGroup(display, C.XkbUseCoreKbd, layout);
-		C.XkbGetState(display, C.XkbUseCoreKbd, state);
+		// XkbLockGroup returns Success(0) or an error code. A non-zero result means the group did not
+		// switch, which the re-read below would otherwise report as "current group" without saying the
+		// switch failed. The full semantic fix (locking by read-back target, not blind +1) is issue #14.
+		if rc := int(C.XkbLockGroup(display, C.XkbUseCoreKbd, layout)); rc != 0 && (*VERBOSE || *DEBUG) {
+			fmt.Printf("Language: XkbLockGroup(%d) returned %d\n", lang, rc)
+		}
+		if rc := int(C.XkbGetState(display, C.XkbUseCoreKbd, state)); rc != 0 && (*VERBOSE || *DEBUG) {
+			fmt.Printf("Language: XkbGetState(after) returned %d\n", rc)
+		}
 	}
 
 	if *VERBOSE {
@@ -1071,13 +1080,24 @@ func Language(lang int) (int) {
 
 // Push or release the key on virtual keyboard
 func sendKey(key t_key) {
+	var err error
 	switch key.value {
 	case 0:
-		kb.Up(key.code)
-		kb.Sync()
+		err = kb.Up(key.code)
+		if e := kb.Sync(); err == nil {
+			err = e
+		}
 	default:
-		kb.Down(key.code)
-		kb.Sync()
+		err = kb.Down(key.code)
+		if e := kb.Sync(); err == nil {
+			err = e
+		}
+	}
+	// kb.Up/Down/Sync write to the uinput device and can fail (device closed, ENODEV). A failed
+	// write during a retype burst is silent otherwise, so surface it - under DEBUG only, because a
+	// dead device would otherwise flood stdout once per key.
+	if err != nil && *DEBUG {
+		fmt.Printf("sendKey(%d=%d) failed: %v\n", key.code, key.value, err)
 	}
 	time.Sleep(time.Duration(Keyboard.Delay) * time.Millisecond)
 }
