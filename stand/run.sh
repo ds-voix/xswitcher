@@ -16,8 +16,8 @@ TOTAL=0
 # "ALL GREEN" is only meaningful together with the number of checks behind it: a phase
 # that aborts early (or gets commented out while debugging) must not look like a pass.
 # Keep this in sync with the number of check() calls below
-# (14 lifecycle/stream + 4 SEQ tail + 27 X11 branch + 6 single-reader + 1 descriptor).
-EXPECT=52
+# (14 lifecycle/stream + 4 SEQ tail + 29 X11 branch + 6 single-reader + 1 descriptor).
+EXPECT=54
 
 say() { printf '%-46s %s\n' "$1" "${2:-}"; }
 check() { # check <name> <0|1>
@@ -442,6 +442,44 @@ kill $SNIFF15 2>/dev/null
 [ "$A15" != "0" ] && { echo "  --- WipeBySelection stream ---"; tail -14 /tmp/a15.log | sed 's/^/  /'; echo "  --- daemon output ---"; grep -E "BACKSPACE|RETYPE" /tmp/sel.log | tail -4 | sed 's/^/  /'; }
 kill $SEL_PID 2>/dev/null
 /tmp/xgroup set 0 >/dev/null 2>&1                     # phase 13 needs a managed layout again
+
+# X26-X27: issue #5 - what an external hook is actually handed. The shipped [Action.Hook1] runs
+# `cat > /tmp/xxx` with SendBuffer = "WORD", and the daemon filled the pipe with
+# fmt.Sprintf("%v", WORD) -- a dump of the internal event list ("[{35 1} {35 0} ...]"), not the text
+# the user typed, so no external command could do anything with it. The shipped config keeps that
+# hook's trigger commented out, so nothing in the normal run ever reached this line; the phase
+# enables the trigger, taps the hook key after a word and reads back the file the hook wrote.
+# The Exec runs with Wait = true here: the daemon blocks until `cat` exits, so the file is complete
+# when it is read, and /bin/cat is spelled out because [Action.Hook1] asks for CleanEnv.
+# Negative control, measured with src/xswitcher.go reverted to the previous tip (the new unit test
+# set aside so the build stays green): 53 of 54 checks pass and X27 is the only red one, with the
+# hook file holding exactly "[{35 1} {35 0} {18 1} ... {56 1} {56 0}]".
+sed -e 's|^# *"Action.Hook1"|  "Action.Hook1"|' \
+    -e '/^\[Action.Hook1\]/,/^\[/ s|^\s*Exec = .*|  Exec = "/bin/cat > /tmp/xxx" # absolute: CleanEnv leaves no PATH|' \
+    -e '/^\[Action.Hook1\]/,/^\[/ s|^# *Wait = true.*|  Wait = true|' \
+    /tmp/x11.conf > /tmp/hook.conf
+HK_ON=$(grep -c '^  "Action.Hook1" = \[' /tmp/hook.conf)
+HK_WAIT=$(grep -c '^  Wait = true$' /tmp/hook.conf)
+[ "$HK_ON" = "1" ] && [ "$HK_WAIT" = "1" ]; check "X26 the hook action is enabled and waited for" "$?"
+[ "$HK_ON" != "1" ] && say "  trigger lines=$HK_ON:" "the next check proves nothing"
+rm -f /tmp/xxx
+/tmp/xgroup set 0 >/dev/null 2>&1
+/tmp/xswitcher -v -c /tmp/hook.conf >/tmp/hook.log 2>&1 &
+HK_PID=$!
+sleep 2
+python3 stand/source_key.py play "$SRC" "ENTER"       # Drop, so the word starts from an empty buffer
+sleep 0.5
+python3 stand/source_key.py play "$SRC" "H,E,L,L,O"
+sleep 0.5
+python3 stand/source_key.py play "$SRC" "KEY_LEFTALT" # the Hook1 trigger: a short left ALT tap
+sleep 2
+GOT_XXX="$(cat /tmp/xxx 2>/dev/null)"
+[ "$GOT_XXX" = "hello" ]; check "X27 the hook got the word as text, not as an event dump" "$?"
+[ "$GOT_XXX" != "hello" ] && {
+    echo "  --- hook file: [${GOT_XXX}] ---"
+    echo "  --- daemon output ---"; grep -E "Exec|Action.Hook1|RETYPE" /tmp/hook.log | tail -6 | sed 's/^/  /'
+}
+kill $HK_PID 2>/dev/null
 
 echo "--- 13. the source node re-created under the same path stays single-reader ---"
 # The inotify handler attaches whatever node appears in /dev/input, and an open fd survives the

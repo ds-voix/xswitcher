@@ -1378,6 +1378,97 @@ func resolveRunAs(uid, gid string) (uint32, uint32, error) {
 	return uint32(u64), uint32(g64), nil
 }
 
+// The glyphs the canonical key names of src/keys.go produce on a US layout: index 0 is the
+// unshifted glyph, index 1 the shifted one, and a one-character value means the key gives the same
+// character either way. Letters need no entry because their name already is the shifted glyph, and
+// neither do the digits, whose names "1".."0" are the unshifted glyphs.
+var usGlyphs = map[string]string{
+	"-": "-_", "=": "=+", "GRAVE": "`~", "APOSTROPHE": "'\"", "SEMICOLON": ";:",
+	"L_BRACE": "[{", "R_BRACE": "]}", "BACKSLASH": "\\|", "COMMA": ",<", "DOT": ".>", "SLASH": "/?",
+	"KP0": "0", "KP1": "1", "KP2": "2", "KP3": "3", "KP4": "4",
+	"KP5": "5", "KP6": "6", "KP7": "7", "KP8": "8", "KP9": "9",
+}
+
+// bufferToText renders the key events a buffer collected back into the characters they produced,
+// so that an external command can be given the word instead of an internal dump.
+//
+// The evdev codes an event carries name a key POSITION, never a glyph, so the only layout this can
+// spell is the one whose position numbering the daemon was configured against: the US row of the
+// shipped [ActionKeys] Layouts = [0, 1]. A word typed in another group comes out as the latin
+// glyphs of the same physical keys, which is what the replay itself would do. Spelling a non-latin
+// group would mean reading the server's XKB map, and that is a change of its own.
+//
+// CapsLock starts from the state the daemon keeps for the machine (getXModifiers() refreshes
+// CTRL from Xkb after every event) and then applies the CAPS presses inside the buffer, so a buffer
+// that toggled it mid-word still renders the way it was typed.
+func bufferToText(buf t_keys) string {
+	shift := false
+	caps := CTRL["CAPS"]
+	text := make([]rune, 0, len(buf))
+	for _, k := range buf {
+		name := key_name[k.code]
+		switch name {
+		case "L_SHIFT", "R_SHIFT":
+			shift = k.value > 0
+			continue
+		case "CAPS":
+			if k.value == 1 {
+				caps = !caps
+			}
+			continue
+		case "BACKSPACE":
+			if k.value == 1 && len(text) > 0 {
+				text = text[ : len(text)-1]
+			}
+			continue
+		case "TAB":
+			if k.value == 1 {
+				text = append(text, '\t')
+			}
+			continue
+		case "ENTER":
+			if k.value == 1 {
+				text = append(text, '\n')
+			}
+			continue
+		case "SPACE":
+			if k.value == 1 {
+				text = append(text, ' ')
+			}
+			continue
+		}
+		if k.value != 1 { // Only a press produces a character; its release and any repeat do not.
+			continue
+		}
+		if glyph, ok := usGlyphs[name]; ok {
+			r := rune(glyph[0])
+			if shift && len(glyph) > 1 {
+				r = rune(glyph[1])
+			}
+			text = append(text, r)
+			continue
+		}
+		if len(name) == 1 && name[0] >= 'A' && name[0] <= 'Z' {
+			// A letter is uppercase when exactly one of Shift and CapsLock is in effect.
+			if shift != caps {
+				text = append(text, rune(name[0]))
+			} else {
+				text = append(text, rune(name[0]-'A'+'a'))
+			}
+			continue
+		}
+		if len(name) == 1 && name[0] >= '0' && name[0] <= '9' { // The names "1".."9" and "0".
+			if shift {
+				text = append(text, rune(")!@#$%^&*("[name[0]-'0']))
+			} else {
+				text = append(text, rune(name[0]))
+			}
+		}
+		// Anything else (function keys, modifiers, navigation) produced no character.
+	}
+	return string(text)
+}
+
 func Exec(A *TAction) {
 /*
 	Exec string
@@ -1416,9 +1507,9 @@ func Exec(A *TAction) {
 	if A.SendBuffer != "" {
 		switch A.SendBuffer {
 		case "WORD":
-			c.StdIn = []byte(fmt.Sprintf("%v",WORD))
+			c.StdIn = []byte(bufferToText(WORD))
 		case "SENTENCE":
-			c.StdIn = []byte(fmt.Sprintf("%v",SENTENCE))
+			c.StdIn = []byte(bufferToText(SENTENCE))
 		default:
 			c.StdIn = []byte(A.SendBuffer)
 		}
