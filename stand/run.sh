@@ -4,6 +4,8 @@
 # the emitted EV_KEY stream; phase 12 checks the X11 branch (XkbLockGroup) on the live server;
 # phase 13 checks that re-creating an already attached device node cannot start a second reader;
 # phase 14 checks that a device the scan skips does not keep its descriptor open.
+# Phases X26-X29 check what an external Exec hook is handed: the typed word as text (issue #5) and,
+# with SendBuffer = "CLIPBOARD", the text of a live X selection owned by a second process.
 # Requires: docker run --privileged, uinput module loaded on the host kernel.
 set -u
 cd /w
@@ -16,8 +18,8 @@ TOTAL=0
 # "ALL GREEN" is only meaningful together with the number of checks behind it: a phase
 # that aborts early (or gets commented out while debugging) must not look like a pass.
 # Keep this in sync with the number of check() calls below
-# (14 lifecycle/stream + 4 SEQ tail + 29 X11 branch + 6 single-reader + 1 descriptor).
-EXPECT=54
+# (14 lifecycle/stream + 4 SEQ tail + 29 X11 branch + 6 single-reader + 1 descriptor + 2 clipboard hook).
+EXPECT=56
 
 say() { printf '%-46s %s\n' "$1" "${2:-}"; }
 check() { # check <name> <0|1>
@@ -480,6 +482,51 @@ GOT_XXX="$(cat /tmp/xxx 2>/dev/null)"
     echo "  --- daemon output ---"; grep -E "Exec|Action.Hook1|RETYPE" /tmp/hook.log | tail -6 | sed 's/^/  /'
 }
 kill $HK_PID 2>/dev/null
+
+# X28-X29: issue #5, the half a keyboard buffer cannot serve. A translation hook is meant to receive
+# what the user *selected*, and a selection made with the mouse never reaches xswitcher at all -- the
+# daemon only sees keystrokes. SendBuffer = "CLIPBOARD" pulls the text off the X CLIPBOARD selection
+# instead. Reading needs a real owner: clipboard hands the selection over to nobody when the owner
+# exits, so the stand keeps stand/cliphold alive for the whole phase and builds it with the same
+# library the daemon reads through, which exercises the protocol instead of an approximation of it.
+# The typed word and the clipboard text are deliberately different ("hello" vs "clip-text"): a daemon
+# that ignored the new case would fall through to `default:` and hand over the literal option name
+# "CLIPBOARD" (measured on the previous tip: 55 of 56 checks pass, X29 is the only red one), and one
+# that reused the word buffer would hand over "hello". Neither is the payload this check expects.
+sed -e 's|^# *"Action.Hook1"|  "Action.Hook1"|' \
+    -e '/^\[Action.Hook1\]/,/^\[/ s|^\s*Exec = .*|  Exec = "/bin/cat > /tmp/xxxc" # absolute: CleanEnv leaves no PATH|' \
+    -e '/^\[Action.Hook1\]/,/^\[/ s|^# *Wait = true.*|  Wait = true|' \
+    -e '/^\[Action.Hook1\]/,/^\[/ s|^\s*SendBuffer = .*|  SendBuffer = "CLIPBOARD"|' \
+    /tmp/x11.conf > /tmp/clip.conf
+go build -o /tmp/cliphold ./stand/cliphold/ >/tmp/cliphold_build.log 2>&1
+CLIPC_ON=$(grep -c '^  SendBuffer = "CLIPBOARD"$' /tmp/clip.conf)
+{ [ "$CLIPC_ON" = "1" ] && [ -x /tmp/cliphold ]; }; check "X28 the hook asks for the clipboard and a holder builds" "$?"
+[ "$CLIPC_ON" != "1" ] && say "  SendBuffer lines=$CLIPC_ON:" "the next check proves nothing"
+[ ! -x /tmp/cliphold ] && { echo "  --- holder build ---"; tail -4 /tmp/cliphold_build.log | sed 's/^/  /'; }
+/tmp/cliphold "clip-text" >/tmp/cliphold.log 2>&1 &
+CLIP_HOLD=$!
+sleep 1
+kill -0 $CLIP_HOLD 2>/dev/null || say "  clipboard holder:" "already gone, see the dump below"
+rm -f /tmp/xxxc
+/tmp/xswitcher -v -c /tmp/clip.conf >/tmp/clip.log 2>&1 &
+CLIP_PID=$!
+sleep 2
+python3 stand/source_key.py play "$SRC" "ENTER"       # Drop, so the word starts from an empty buffer
+sleep 0.5
+python3 stand/source_key.py play "$SRC" "H,E,L,L,O"
+sleep 0.5
+python3 stand/source_key.py play "$SRC" "KEY_LEFTALT" # the Hook1 trigger: a short left ALT tap
+sleep 2
+GOT_CLIP="$(cat /tmp/xxxc 2>/dev/null)"
+[ "$GOT_CLIP" = "clip-text" ]; check "X29 the hook got the clipboard text, not the word or the option name" "$?"
+[ "$GOT_CLIP" != "clip-text" ] && {
+    echo "  --- hook file: [${GOT_CLIP}] ---"
+    echo "  --- holder ---"; tail -3 /tmp/cliphold.log | sed 's/^/  /'
+    echo "  --- holder build ---"; tail -3 /tmp/cliphold_build.log | sed 's/^/  /'
+    echo "  --- daemon output ---"; grep -Ei "Exec|Hook1|clipboard" /tmp/clip.log | tail -8 | sed 's/^/  /'
+}
+kill $CLIP_PID 2>/dev/null
+kill $CLIP_HOLD 2>/dev/null
 
 echo "--- 13. the source node re-created under the same path stays single-reader ---"
 # The inotify handler attaches whatever node appears in /dev/input, and an open fd survives the

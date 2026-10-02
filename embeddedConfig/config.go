@@ -156,7 +156,9 @@ const Toml string = `
   # name key positions, never glyphs, so the rendering uses the layout those positions belong to
   # (the first row of [ActionKeys] Layouts, US in this config): a word typed in another group comes
   # out as the latin glyphs of the same physical keys.
-  SendBuffer = "WORD" # "WORD"|"SENTENCE"|"any custom input\n"
+  # "CLIPBOARD" passes the text the clipboard currently holds. That is the only way to hand the hook a
+  # selection: the daemon watches keystrokes and never sees what was highlighted with the mouse.
+  SendBuffer = "WORD" # "WORD"|"SENTENCE"|"CLIPBOARD"|"any custom input\n"
 
   UseShell = true # Execute inside /bin/bash
 #  Directory = "/path/to/" # Change the working directory to this one.

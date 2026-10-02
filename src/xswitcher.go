@@ -1510,6 +1510,12 @@ func Exec(A *TAction) {
 			c.StdIn = []byte(bufferToText(WORD))
 		case "SENTENCE":
 			c.StdIn = []byte(bufferToText(SENTENCE))
+		case "CLIPBOARD":
+			// The text the user already selected/copied (issue #5). A word buffer cannot supply it:
+			// xswitcher only sees keystrokes, while the selection lives in the X server. An unreadable
+			// or non-text clipboard gives an empty stdin, the same as an empty WORD would.
+			txt, _ := clipboardText()
+			c.StdIn = []byte(txt)
 		default:
 			c.StdIn = []byte(A.SendBuffer)
 		}
@@ -1930,21 +1936,28 @@ func Respawn(*TAction) { // Completelly respawn xswitcher.
 	os.Exit(0)
 }
 
-func typeClipboard(A *TAction) { // Try to type the text from clipboard to virtual keyboard.
+func clipboardText() (string, bool) { // The clipboard's text, or false if it is unreadable or holds none.
+	// Init only has to succeed once per process, so the guard lives here instead of at every caller.
+	// The content itself is never printed: it is whatever the user last copied.
 	if ! clipboardOk {
-		err := clipboard.Init()
-		if err != nil {
+		if err := clipboard.Init(); err != nil {
 			fmt.Printf("Unable to read from the clipboard: %v.\n", err)
-			return
+			return "", false
 		}
+		clipboardOk = true
 	}
-	clipboardOk = true
 	b := clipboard.Read(clipboard.FmtText)
-	if b == nil { return }
+	if b == nil { return "", false }
+	return string(b), true
+}
 
-//	fmt.Println(scancodes.SequenceForString(string(b)))
+func typeClipboard(A *TAction) { // Try to type the text from clipboard to virtual keyboard.
+	b, ok := clipboardText()
+	if !ok { return }
+
+//	fmt.Println(scancodes.SequenceForString(b))
 //	return
-	clip := strings.Split(scancodes.SequenceForString(string(b)), " ")
+	clip := strings.Split(scancodes.SequenceForString(b), " ")
 	for _, cc := range clip {
 //		fmt.Printf("%v\n", cc)
 		c := strings.Split(cc, "+")
