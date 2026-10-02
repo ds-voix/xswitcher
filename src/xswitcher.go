@@ -276,6 +276,11 @@ var (
 	CTRL_SENTENCE map[string]bool // CTRL at the beginning of the SENTENCE
 	COMPOSE int // Compose counter
 	EXTRA int // Extra keys (to call the Action), must not be retyped.
+	// The XKB group the last WORD character was typed in, or -1 while no character was typed since
+	// the buffer was cleaned. RetypeWord replays raw scancodes and the server translates them with the
+	// group active at the replay, so this is the only record of which layout the text the application
+	// holds really came from (issue #14).
+	wordLayout = -1
 	DOWN = make(map[uint16] int) // In any case, all virtual keys MUST BE RELEASED at the end of retyping.
 
 	clipboardOk = false
@@ -286,12 +291,14 @@ var (
 // variables above stay the "active" buffer for the window that currently owns input focus; on a
 // focus change the outgoing buffer is saved under its window id and the incoming window's buffer
 // is restored (or started empty). The virtual "WORD" state key is owned by the buffer, not by the
-// machine-wide modifier set, so it travels with it via wordDone.
+// machine-wide modifier set, so it travels with it via wordDone, and so does the layout the word was
+// typed in (wordLayout): a different window can have its own idea of "the layout I am on".
 type winBuffers struct {
 	TEST, WORD, SENTENCE t_keys
 	CTRL_WORD, CTRL_SENTENCE map[string]bool
 	COMPOSE int
 	wordDone bool // whether CTRL["WORD"] was set when this buffer was saved
+	wordLayout int // the group the last character of this buffer was typed in (-1 = none yet)
 }
 
 var (
@@ -896,6 +903,7 @@ func dropBuffers() {
 	CTRL_WORD = copyCTRL(CTRL)
 	CTRL_SENTENCE = copyCTRL(CTRL)
 	COMPOSE = 0
+	wordLayout = -1
 
 	if *VERBOSE {
 		fmt.Printf("dropBuffers()\n")
@@ -924,7 +932,7 @@ func saveBuffers(id C.Window) {
 	winBuf[id] = &winBuffers{
 		TEST: TEST, WORD: WORD, SENTENCE: SENTENCE,
 		CTRL_WORD: CTRL_WORD, CTRL_SENTENCE: CTRL_SENTENCE,
-		COMPOSE: COMPOSE, wordDone: wd,
+		COMPOSE: COMPOSE, wordDone: wd, wordLayout: wordLayout,
 	}
 	delete(CTRL, "WORD")
 	touchWindow(id)
@@ -942,6 +950,7 @@ func loadBuffers(id C.Window) {
 	}
 	TEST, WORD, SENTENCE = b.TEST, b.WORD, b.SENTENCE
 	CTRL_WORD, CTRL_SENTENCE, COMPOSE = b.CTRL_WORD, b.CTRL_SENTENCE, b.COMPOSE
+	wordLayout = b.wordLayout
 	if b.wordDone {
 		CTRL["WORD"] = true
 	} else {
@@ -961,6 +970,7 @@ func newWord() {
 	delete(CTRL, "WORD")
 	CTRL_WORD = copyCTRL(CTRL)
 	COMPOSE = 0
+	wordLayout = -1 // whatever group the surviving pressed key came from is not recorded yet
 }
 
 func DropBuffers(A *TAction) {
@@ -1004,11 +1014,25 @@ func collectManagedLayouts() {
 	}
 }
 
-func checkLanguageId() bool {
+// checkLanguageId reads the group the server is on and reports whether this configuration manages
+// it. The group itself is returned too: checkAppend records it with the word, which is what tells a
+// later retype which layout the characters were produced in (issue #14). One XkbGetState per key
+// event serves both, so the snapshot costs no extra round trip. A read that fails reports -1, a
+// group no list can name, so the caller treats the layout as unmanaged instead of silently claiming
+// group 0 from an untouched struct.
+func checkLanguageId() (int, bool) {
 	state := new(C.struct__XkbStateRec)
-	C.XkbGetState(display, C.XkbUseCoreKbd, state);
+	group := -1
 
-	return managedLayouts[int(state.group)]
+	if rc := int(C.XkbGetState(display, C.XkbUseCoreKbd, state)); rc != 0 {
+		if *VERBOSE || *DEBUG {
+			fmt.Printf("checkLanguageId: XkbGetState returned %d\n", rc)
+		}
+	} else {
+		group = int(state.group)
+	}
+
+	return group, managedLayouts[group]
 }
 
 func getXModifiers() uint32 {
@@ -1144,6 +1168,22 @@ func RetypeWord(A *TAction) {
 	}
 	count := 0 // Count chars to be deleted
 	seq := 0 // Incremental key event counter
+
+	// Issue #14: the replay below sends raw scancodes, and the server translates them with the layout
+	// that is active AT THE REPLAY. The action chain runs Switch() first, and Switch() steps on from
+	// the group it reads at that moment - so when the layout changed without xswitcher seeing a word
+	// character (another program, a desktop shortcut, an application doing it itself) the step can
+	// arrive back on the very group the word was typed in, and the "corrected" word comes out
+	// identical to the broken one. If it did, lock the group the word was NOT typed in.
+	// Wayland stays out of this: under [Wayland] BypassX the daemon cannot observe a layout change it
+	// did not make itself, Language() there only reports its own cache, and correcting from that cache
+	// would double the switch the desktop already performed.
+	if !Wayland.BypassX && wordLayout >= 0 && len(ActionKeys.Layouts) > 0 {
+		if active := Language(-1); active == wordLayout {
+			Language(nextLayout(wordLayout, ActionKeys.Layouts))
+		}
+	}
+
 	// Patch "orphaned" key releases.
 	o := make(map[uint16] bool) // True since key-down till key-up.
 	for i := 0; i < (len(WORD) - EXTRA); i++ {
@@ -1237,6 +1277,9 @@ func RetypeWord(A *TAction) {
 	}
 	WORD = WORD[ 0 : (len(WORD) - EXTRA)]
 	CTRL["WORD"] = true
+	// Whatever the application holds now is the replayed text, produced in the layout that is active
+	// at this moment - so the snapshot follows the word instead of staying on the layout it came from.
+	wordLayout = Language(-1)
 
 	// Clear virtual keyboard state
 	if len(DOWN) > 0 {
@@ -1573,7 +1616,8 @@ func checkAppend(event t_key, slice ...*t_keys) {
 	}
 	getXModifiers() // X can lag while setting NUMLOCK state (and m.b. CAPSLOCK too), so check it after each key event
 
-	if ! checkLanguageId() { // A group no action and the global [ActionKeys] Layouts list name:
+	group, managed := checkLanguageId() // A group no action and the global [ActionKeys] Layouts list name:
+	if ! managed {
 		// drop the buffers, so switching back cannot retype a WORD left over from the last managed
 		// group. dropBuffers() is idempotent, so calling it on every event while unmanaged is safe.
 		dropBuffers()
@@ -1598,6 +1642,13 @@ func checkAppend(event t_key, slice ...*t_keys) {
 	}
 
 	for _, key := range slice {
+		// Issue #14: remember the layout the characters of WORD were produced in. Only the word
+		// buffer records it, and only for the events WordChars counts as characters to wipe, so the
+		// trigger's own keys (PAUSE, the modifiers) never overwrite it. testKey() passes TEST alone,
+		// so a mouse click cannot touch the snapshot either.
+		if key == &WORD && WordChars.MatchString(key_name[event.code] + ":" + strconv.Itoa(int(event.value))) {
+			wordLayout = group
+		}
 		*key = append(*key, event)
 	}
 

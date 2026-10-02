@@ -17,7 +17,7 @@ TOTAL=0
 # that aborts early (or gets commented out while debugging) must not look like a pass.
 # Keep this in sync with the number of check() calls below
 # (14 lifecycle/stream + 4 SEQ tail + 19 X11 branch + 6 single-reader + 1 descriptor).
-EXPECT=47
+EXPECT=50
 
 say() { printf '%-46s %s\n' "$1" "${2:-}"; }
 check() { # check <name> <0|1>
@@ -370,6 +370,43 @@ kill $CY_PID 2>/dev/null
 # an unmanaged layout: checkLanguageId() drops the buffers on every key and the daemon emits nothing,
 # which is exactly the empty stream D1/D4/D6 reported. Put the server back where phase 12 left it.
 /tmp/xgroup set 0 >/dev/null 2>&1
+
+# X21-X23: issue #14 - the replay must not land in the layout the word was typed in. The word is
+# typed on group 0, then an outside client (/tmp/xgroup, standing in for a desktop shortcut or an
+# application that switches the layout itself) moves the server to group 1 and NO word character
+# follows it. The action chain still runs Switch() first, and Switch() steps on from the group it
+# reads at that moment: from 1 it wraps to 0, which is exactly the layout the word came from, so the
+# "corrected" word was re-produced in the layout that made it wrong.
+# Negative control, measured on the previous tip: X22 stays green (the wipe and the replay do
+# happen), X23 is the one that reddens - the log ends "Language: 1 >> 0" and /tmp/xgroup times out
+# waiting for group 1.
+/tmp/xgroup set 0 >/dev/null 2>&1
+/tmp/xswitcher -v -c /tmp/x11.conf >/tmp/typed.log 2>&1 &
+TYPED_PID=$!
+sleep 2
+python3 stand/source_key.py play "$SRC" "ENTER"       # Drop, so the word starts from an empty buffer
+sleep 0.5
+TSV14=/tmp/keybd14.tsv
+rm -f "$TSV14"
+python3 stand/sniff.py "keybd interface" "$TSV14" 15 >/tmp/sniff14.log 2>&1 &
+SNIFF14=$!
+sleep 1
+python3 stand/source_key.py play "$SRC" "H,E,L,L,O"   # produced while the server is on group 0
+sleep 0.5
+/tmp/xgroup set 1 >/dev/null 2>&1                     # the layout moves without xswitcher seeing a char
+/tmp/xgroup get until 1 3 >/dev/null
+check "X21 precondition: the word sits on group 0 while the server is on 1" "$?"
+python3 stand/source_key.py play "$SRC" "PAUSE"       # the RetypeWord trigger
+sleep 3
+python3 stand/analyze.py "$TSV14" "H,E,L,L,O" none >/tmp/a14.log 2>&1; A14=$?
+kill $SNIFF14 2>/dev/null
+[ "$A14" = "0" ]; check "X22 the word was wiped and retyped at all" "$?"
+[ "$A14" != "0" ] && { echo "  --- #14 stream analysis ---"; tail -12 /tmp/a14.log | sed 's/^/  /'; }
+/tmp/xgroup get until 1 3 >/dev/null; RETAINED=$?
+[ "$RETAINED" = "0" ]; check "X23 the replay left the server off the layout the word came from" "$?"
+[ "$RETAINED" != "0" ] && { echo "  --- #14 daemon output ---"; grep -E "Language|RETYPE" /tmp/typed.log | tail -5 | sed 's/^/  /'; }
+kill $TYPED_PID 2>/dev/null
+/tmp/xgroup set 0 >/dev/null 2>&1                     # phase 13 needs a managed layout again
 
 echo "--- 13. the source node re-created under the same path stays single-reader ---"
 # The inotify handler attaches whatever node appears in /dev/input, and an open fd survives the
