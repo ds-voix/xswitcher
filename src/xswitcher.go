@@ -1801,6 +1801,14 @@ func ipcStatus() ipc.Response {
 }
 
 func ipcReload() ipc.Response {
+	// Reload is a respawn, and the child parses this same file on its way up: config()
+	// panics on a file it cannot parse (src/xswitcher.go:308) and exits on one it cannot
+	// even open, and by then the parent has already scheduled its own exit -- the daemon is
+	// gone and the GUI, which was told the respawn had started, never learns why the
+	// keyboard stopped. So the file the child is about to inherit is validated first.
+	if err := ipcValidate(); err != nil {
+		return ipc.Response{Ok: false, Error: fmt.Sprintf("reload refused, %s kept as is: %v", CONFIG_PATH, err)}
+	}
 	p, err := forkChild()
 	if err != nil {
 		return ipc.Response{Ok: false, Error: fmt.Sprintf("respawn: %v", err)}

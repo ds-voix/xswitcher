@@ -331,5 +331,82 @@ EN=$(readings_value en); RU=$(readings_value ru)
 [ "$EN" = "r" ] && [ "$RU" = "к" ]
 check "p5 readings spell the buffered key in both scripts (en=$EN ru=$RU)" "$?"
 
+# Phase 6 -- reload must refuse a file the respawned child could not parse.
+#
+# set_config already validates through WriteTOMLChecked, so a broken config can
+# only arrive out of band: a hand edit, a partial write, another tool. Reload is
+# the path that inherits whatever is on disk, because the child runs config() on
+# its way up and panics on a file it cannot parse -- and by then the parent has
+# already scheduled its own exit. Without the gate the keyboard dies and the GUI
+# is left holding a response that said the respawn had started.
+reload_reply() { # prints ok, refused:<error>, or dead when nothing answers
+    python3 - "$SOCK" <<'PY'
+import json, socket, sys
+try:
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(3)
+    s.connect(sys.argv[1])
+    s.sendall(b'{"cmd":"reload"}\n')
+    buf = b""
+    while not buf.endswith(b"\n"):
+        d = s.recv(4096)
+        if not d: break
+        buf += d
+    r = json.loads(buf)
+except Exception:
+    print("dead")
+    sys.exit(0)
+print("ok" if r.get("ok") else "refused:" + str(r.get("error")))
+PY
+}
+
+ping_alive() { # 0 while some daemon answers on the socket
+    python3 - "$SOCK" <<'PY' >/dev/null 2>&1
+import json, socket, sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(3)
+s.connect(sys.argv[1])
+s.sendall(b'{"cmd":"ping"}\n')
+buf = b""
+while not buf.endswith(b"\n"):
+    d = s.recv(4096)
+    if not d: sys.exit(1)
+    buf += d
+sys.exit(0 if json.loads(buf).get("ok") else 1)
+PY
+}
+
+PID_BEFORE=$(status_value pid)
+cp "$CONF" /tmp/smoke-reload-backup.conf
+printf '%s\n' 'this is not = valid = toml' >> "$CONF"
+BEFORE_HASH=$(sha256sum "$CONF" | cut -c1-16)
+
+REPLY=$(reload_reply)
+case "$REPLY" in refused:*) true ;; *) false ;; esac
+check "p6 reload refused the unparsable file" "$?"
+echo "$REPLY" | grep -q "kept as is"
+check "p6 the refusal names the file it kept" "$?"
+# A refusal must not have handed over: a parent that respawns exits about 200 ms
+# after answering, so this pause is what separates "refused and still serving" from
+# "accepted, parent gone, child dead on the same file". With the gate removed the
+# daemon log does carry one Config error, and a ping fired straight away still won
+# the race against the dying parent -- measured 08:07 UTC, which is why the pause
+# and the PID comparison are both in this phase.
+sleep 1   # past the 200 ms window a respawning parent uses to exit
+ping_alive
+check "p6 the daemon still serves after the refusal" "$?"
+[ "$(status_value pid)" = "$PID_BEFORE" ]
+check "p6 the same process serves on, no child was forked" "$?"
+AFTER_HASH=$(sha256sum "$CONF" | cut -c1-16)
+[ "$BEFORE_HASH" = "$AFTER_HASH" ]
+check "p6 the refused reload left the file byte-identical" "$?"
+
+# And the refusal is about this file, not about reload in general: with the good
+# config back on disk the same command respawns and answers again.
+cp /tmp/smoke-reload-backup.conf "$CONF"
+respawn; RC=$?
+check "p6 $RESPAWN_STAGE" "$RC"
+[ "$RC" = "0" ] || { say "FATAL: daemon gone after the p6 reload" ""; tail -20 "$LOG"; exit 9; }
+
 if [ "$FAILED" = "0" ]; then echo "SMOKE_EXIT=0 ALL GREEN"; else echo "SMOKE_EXIT=1"; tail -20 "$LOG"; fi
 exit "$FAILED"
