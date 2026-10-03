@@ -1,8 +1,8 @@
 // Package main — see main.go for overview.
-// editor.go provides the config editor panel with structured forms for
-// ScanDevices, Keyboard, Wayland sections and a raw TOML text area for
-// complex sections (Action.*, WindowClasses). Phase 0: forms are bound to
-// the daemon config via IPC get_config/set_config.
+// editor.go provides the config editor panel: Basics forms (ScanDevices,
+// Keyboard, Wayland) plus structured sub-tabs for [ActionKeys], [Templates],
+// [[WindowClasses]] and [Action.*], and a read-only view of whatever sections
+// remain unbound. Bound to the daemon via IPC get_config/set_config.
 package main
 
 import (
@@ -31,6 +31,11 @@ type configPanel struct {
 	layoutEntries                       [4]*widget.Entry
 	rawTOML                             *widget.Entry
 	statusLabel                         *widget.Label
+
+	windowClasses *windowClassesEditor
+	actions       *actionsEditor
+	templates     *templatesEditor
+	actionKeys    *actionKeysEditor
 }
 
 // newEditorPanel creates the Config tab content. It also returns a load
@@ -84,36 +89,43 @@ func newEditorPanel(client *ipc.Client) (fyne.CanvasObject, func()) {
 	}
 	waylandForm := widget.NewForm(waylandRows...)
 
-	// Raw TOML area for complex sections (Action.*, WindowClasses)
+	basics := container.NewVScroll(container.NewVBox(
+		widget.NewCard("ScanDevices", "", scanDevicesForm),
+		widget.NewCard("Keyboard", "", keyboardForm),
+		widget.NewCard("Wayland", "", waylandForm),
+	))
+
+	wcObj, wc := newWindowClassesEditor()
+	p.windowClasses = wc
+	actObj, acts := newActionsEditor()
+	p.actions = acts
+	tmplObj, tmpls := newTemplatesEditor()
+	p.templates = tmpls
+	akObj, aks := newActionKeysEditor()
+	p.actionKeys = aks
+
+	// Read-only view of the still-unbound sections (the [Actions] chain).
 	p.rawTOML = widget.NewMultiLineEntry()
 	p.rawTOML.Wrapping = fyne.TextWrapWord
-	p.rawTOML.SetPlaceHolder("# [Action.*] and [[WindowClasses]] sections (read-only until Phase 2)")
+	p.rawTOML.SetPlaceHolder("# remaining sections ([Actions] chain), read-only")
 
 	p.statusLabel = widget.NewLabel("")
 
 	loadBtn := widget.NewButton("Load", p.load)
 	applyBtn := widget.NewButton("Apply", p.apply)
 	reloadBtn := widget.NewButton("Reload daemon", p.reload)
-
 	buttons := container.NewHBox(loadBtn, applyBtn, reloadBtn)
 
-	scanGroup := widget.NewCard("ScanDevices", "", scanDevicesForm)
-	keyboardGroup := widget.NewCard("Keyboard", "", keyboardForm)
-	waylandGroup := widget.NewCard("Wayland", "", waylandForm)
-	rawGroup := widget.NewCard("Advanced (raw TOML)", "", p.rawTOML)
-
-	scroll := container.NewVScroll(
-		container.NewVBox(
-			scanGroup,
-			keyboardGroup,
-			waylandGroup,
-			rawGroup,
-			buttons,
-			p.statusLabel,
-		),
+	subTabs := container.NewAppTabs(
+		container.NewTabItem("Basics", basics),
+		container.NewTabItem("ActionKeys", akObj),
+		container.NewTabItem("Templates", tmplObj),
+		container.NewTabItem("WindowClasses", wcObj),
+		container.NewTabItem("Actions", actObj),
+		container.NewTabItem("Other (raw)", container.NewVScroll(p.rawTOML)),
 	)
 
-	return scroll, p.load
+	return container.NewBorder(nil, container.NewVBox(buttons, p.statusLabel), nil, nil, subTabs), p.load
 }
 
 // --- value extraction from the nested map returned by get_config ------------
@@ -198,6 +210,11 @@ func (p *configPanel) load() {
 		e.SetText(mapList(wayland, fmt.Sprintf("Layout%d", i)))
 	}
 
+	p.actionKeys.load(data)
+	p.templates.load(data)
+	p.windowClasses.load(data)
+	p.actions.load(data)
+
 	p.rawTOML.SetText(renderRawSections(data))
 	p.statusLabel.SetText("Config loaded from daemon")
 }
@@ -233,6 +250,17 @@ func (p *configPanel) modsFromWidgets() map[string]any {
 		lines := splitNonEmpty(e.Text)
 		if len(lines) > 0 {
 			mods[fmt.Sprintf("Wayland.Layout%d", i)] = lines
+		}
+	}
+
+	for _, sub := range []map[string]any{
+		p.actionKeys.mods(),
+		p.templates.mods(),
+		p.windowClasses.mods(),
+		p.actions.mods(),
+	} {
+		for k, v := range sub {
+			mods[k] = v
 		}
 	}
 	return mods
@@ -277,15 +305,17 @@ func (p *configPanel) reload() {
 	p.statusLabel.SetText(fmt.Sprintf("Applied, daemon respawned (PID %d)", resp.PID))
 }
 
-// renderRawSections dumps every config section not covered by the structured
-// forms so the user can at least inspect Actions, WindowClasses, etc.
-// Display-only: JSON turns TOML ints into float64, so integral floats are
-// restored to ints before marshalling to avoid "1.0" in the output.
+// renderRawSections dumps every config section not covered by a structured
+// editor, so the user can at least inspect the [Actions] chain and anything
+// else the forms do not bind. Display-only: JSON turns TOML ints into
+// float64, so integral floats are restored to ints before marshalling to
+// avoid "1.0" in the output.
 func renderRawSections(data map[string]any) string {
 	filtered := make(map[string]any)
 	for key, value := range data {
 		switch key {
-		case "ScanDevices", "Keyboard", "Wayland":
+		case "ScanDevices", "Keyboard", "Wayland",
+			"Action", "ActionKeys", "Templates", "WindowClasses":
 			continue
 		}
 		filtered[key] = normalizeFloats(value)

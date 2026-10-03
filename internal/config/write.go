@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -62,9 +63,13 @@ func writeFile(path string, out []byte) error {
 }
 
 // applyModsLines returns the file content with every dotted key in mods
-// applied. Only two-level keys ("Section.Key") are supported: the GUI edits
-// whole sections, and deeper keys belong to action definitions edited as raw
-// TOML in a later phase.
+// applied. Supported paths:
+//
+//   - "Section.Key" (and deeper, e.g. "Action.RetTypeWord.Layout" for the
+//     [Action.RetTypeWord] table): one scalar/array value per line.
+//   - "Section" with an array-of-maps value: the whole [[Section]] array of
+//     tables is regenerated in place. Comments inside replaced blocks are
+//     lost; everything else in the file is untouched.
 func applyModsLines(path string, mods map[string]interface{}) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -74,45 +79,159 @@ func applyModsLines(path string, mods map[string]interface{}) ([]byte, error) {
 	lines := strings.SplitAfter(string(data), "\n")
 	for key, value := range mods {
 		parts := strings.Split(key, ".")
-		if len(parts) != 2 {
-			return nil, fmt.Errorf("unsupported key path %q: only Section.Key is editable", key)
-		}
 		if value == nil {
 			continue // a JSON-explicit null must not create an invalid `Key = ` line
 		}
-		formatted, err := formatValue(value)
+		var err error
+		if len(parts) == 1 {
+			entries, ok := arrayOfTables(value)
+			if !ok {
+				return nil, fmt.Errorf("unsupported key path %q: expected Section.Key, or a table name with an array-of-tables value", key)
+			}
+			lines, err = setArrayTable(lines, parts[0], entries)
+		} else {
+			var formatted string
+			formatted, err = formatValue(value)
+			if err == nil {
+				section := strings.Join(parts[:len(parts)-1], ".")
+				lines, err = setLine(lines, section, parts[len(parts)-1], formatted)
+			}
+		}
 		if err != nil {
 			return nil, fmt.Errorf("key %q: %w", key, err)
-		}
-		lines, err = setLine(lines, parts[0], parts[1], formatted)
-		if err != nil {
-			return nil, err
 		}
 	}
 	return []byte(strings.Join(lines, "")), nil
 }
 
+// arrayOfTables reports whether a JSON-decoded value is a non-empty array
+// whose every element is a table — the shape of a [[Section]] rewrite.
+func arrayOfTables(value interface{}) ([]interface{}, bool) {
+	items, ok := value.([]interface{})
+	if !ok || len(items) == 0 {
+		return nil, false
+	}
+	for _, item := range items {
+		if _, ok := item.(map[string]interface{}); !ok {
+			return nil, false
+		}
+	}
+	return items, true
+}
+
 var (
-	sectionRE = regexp.MustCompile(`^\s*\[([^\[\]]+)\]\s*$`)
+	// Trailing comments are allowed on every header form: the shipped config
+	// writes `[[WindowClasses]] # Default behaviour: ...` and
+	// `[Action.RetypeWord] # Switch layout, ...`.
+	tableHeaderRE = regexp.MustCompile(`^\s*\[([^\[\]]+)\](\s*#.*)?$`)
+	arrayHeaderRE = regexp.MustCompile(`^\s*\[\[([^\[\]]+)\]\](\s*#.*)?$`)
 	// A key line: optional indent, bare or quoted key, '='. Comments (`# key
 	// = ...`) never match because the line must start with the key.
 	keyLineRE = regexp.MustCompile(`^([ \t]*)([A-Za-z0-9_]+|"([^"]+)")[ \t]*=`)
 )
 
-// setLine applies "Section.Key = value" to the line slice.
+// headerKind classifies a line as 0 = not a header, 1 = [table],
+// 2 = [[array-of-tables]], and returns the trimmed section name.
+func headerKind(line string) (int, string) {
+	trimmed := strings.TrimRight(line, "\r\n")
+	if m := arrayHeaderRE.FindStringSubmatch(trimmed); m != nil {
+		return 2, strings.TrimSpace(m[1])
+	}
+	if m := tableHeaderRE.FindStringSubmatch(trimmed); m != nil {
+		return 1, strings.TrimSpace(m[1])
+	}
+	return 0, ""
+}
+
+// setArrayTable replaces every [[name]] block (header line up to the next
+// header) with the generated entries, keeping the position of the first
+// block; with no existing blocks the new ones are appended at the end.
+func setArrayTable(lines []string, name string, entries []interface{}) ([]string, error) {
+	var kept []string
+	insertAt := -1
+	inBlock := false
+	for _, line := range lines {
+		kind, hname := headerKind(line)
+		if kind == 2 && hname == name {
+			if insertAt < 0 {
+				insertAt = len(kept)
+			}
+			inBlock = true
+			continue
+		}
+		if kind != 0 {
+			inBlock = false
+		}
+		if !inBlock {
+			kept = append(kept, line)
+		}
+	}
+
+	var blocks []string
+	if insertAt < 0 {
+		insertAt = len(kept)
+		if len(kept) > 0 {
+			last := kept[len(kept)-1]
+			if strings.TrimRight(last, "\r\n") != "" {
+				blocks = append(blocks, "\n")
+			}
+		}
+	} else if insertAt > 0 {
+		prev := strings.TrimRight(kept[insertAt-1], "\r\n")
+		kind, _ := headerKind(prev)
+		if prev != "" && kind == 0 { // separate a preceding key/comment line from the new header
+			blocks = append(blocks, "\n")
+		}
+	}
+	if n := len(kept); n > 0 && insertAt == n && !strings.HasSuffix(kept[n-1], "\n") {
+		kept[n-1] = kept[n-1] + "\n"
+	}
+	for _, entry := range entries {
+		table := entry.(map[string]interface{})
+		blocks = append(blocks, "[["+name+"]]\n")
+		keys := make([]string, 0, len(table))
+		for k := range table {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if table[k] == nil {
+				continue
+			}
+			s, err := formatValue(table[k])
+			if err != nil {
+				return nil, fmt.Errorf("value of %s.%s: %w", name, k, err)
+			}
+			blocks = append(blocks, k+" = "+s+"\n")
+		}
+		blocks = append(blocks, "\n")
+	}
+
+	out := make([]string, 0, len(kept)+len(blocks))
+	out = append(out, kept[:insertAt]...)
+	out = append(out, blocks...)
+	out = append(out, kept[insertAt:]...)
+	return out, nil
+}
+
+// setLine applies "Section.Key = value" to the line slice. Section may be a
+// dotted table name ("Action.RetTypeWord"); array-of-tables headers never
+// match, they are rewritten whole via setArrayTable.
 func setLine(lines []string, section, key, value string) ([]string, error) {
 	inSection := -1 // index of the [section] header
 	sectionEnd := len(lines)
 
 	for i, line := range lines {
-		if m := sectionRE.FindStringSubmatch(strings.TrimRight(line, "\r\n")); m != nil {
-			if inSection >= 0 {
-				sectionEnd = i
-				break
-			}
-			if strings.TrimSpace(m[1]) == section {
-				inSection = i
-			}
+		kind, name := headerKind(line)
+		if kind == 0 {
+			continue
+		}
+		if inSection >= 0 {
+			sectionEnd = i
+			break
+		}
+		if kind == 1 && name == section {
+			inSection = i
 		}
 	}
 	if inSection < 0 {

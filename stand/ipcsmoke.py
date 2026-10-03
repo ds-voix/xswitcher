@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-# Live IPC smoke against a running daemon (start it with XSWITCHER_SOCK and
-# CONFIG pointing at /tmp/GuiSmoke.conf first). Covers Phase 0 of
-# GUI-PLAN-PUNTO.md: ping/status/get_config/set_config/validate over the real
-# unix socket, comment preservation, and rejection of an invalid mod.
+# Live IPC smoke against a running daemon (stand/smoke.sh brings the whole
+# environment up). Covers GUI-PLAN-PUNTO.md Phases 0-2 over the real unix
+# socket: ping/status, get_config/set_config/validate, comment preservation,
+# rejection of an invalid mod, dotted paths into [Action.*] tables, and the
+# whole-array rewrite of [[WindowClasses]].
 import json
 import socket
 import sys
@@ -57,6 +58,26 @@ check("bad set rejected", not r["ok"], r.get("error", "")[:60])
 check("file untouched after reject", open(CFG).read() == before)
 
 check("validate", req(s, {"cmd": "validate"})["ok"])
+
+# Phase 2: dotted paths into [Action.<name>] tables and the [[WindowClasses]]
+# array-of-tables rewrite. The set_config gate must accept both, and the file
+# must keep the parts the writers promise not to touch.
+r = req(s, {"cmd": "set_config", "data": {
+    "Action.Hook1.Timeout": 5.0,
+    "WindowClasses": [
+        {"Regex": "^smoketest", "MouseClickDrops": False, "Actions": "Actions"},
+        {"MouseClickDrops": True, "Actions": "Actions"},
+    ],
+}})
+check("p2 dotted+array set", r["ok"], str(r)[:120])
+body2 = open(CFG).read()
+check("p2 action header comment kept", "# Run external commands" in body2)
+check("p2 dotted key written", "Timeout = 5" in body2)
+check("p2 array rewritten", body2.count("[[WindowClasses]]") == 2
+      and 'Regex = "^smoketest"' in body2
+      and 'Regex = "^(VirtualBox' not in body2 and 'Regex = "^konsole"' not in body2)
+check("p2 tail comment kept", "# precious comment" in body2)
+check("p2 validate", req(s, {"cmd": "validate"})["ok"])
 
 s.close()
 sys.exit(1 if failures else 0)
