@@ -1,0 +1,16 @@
+{
+  "language.name": "Русский",
+  "language.english": "Russian",
+  "gui.tab.config": "Настройки",
+  "gui.tab.status": "Состояние",
+  "gui.tab.about": "О программе",
+  "editor.btn.load": "Загрузить",
+  "editor.btn.apply": "Применить",
+  "status.entries.count": {
+    "one": "{{.Count}} запись",
+    "few": "{{.Count}} записи",
+    "many": "{{.Count}} записей",
+    "other": "{{.Count}} записи"
+  },
+  "preview.letters": "Буфер: \"{{.Buffer}}\" ({{.Len}} букв)"
+}

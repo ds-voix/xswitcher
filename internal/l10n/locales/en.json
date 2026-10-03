@@ -1,0 +1,14 @@
+{
+  "language.name": "English",
+  "language.english": "English",
+  "gui.tab.config": "Config",
+  "gui.tab.status": "Status",
+  "gui.tab.about": "About",
+  "editor.btn.load": "Load",
+  "editor.btn.apply": "Apply",
+  "status.entries.count": {
+    "one": "{{.Count}} entry",
+    "other": "{{.Count}} entries"
+  },
+  "preview.letters": "Buffer: \"{{.Buffer}}\" ({{.Len}} letters)"
+}
