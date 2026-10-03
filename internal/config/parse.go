@@ -22,6 +22,19 @@ type ParsedConfig struct {
 	Actions       TActions
 	ActionSet     map[string]TAction
 	Wayland       TWayland
+	AutoReplace   []TAutoReplace
+	Hotkeys       []THotkey
+}
+
+// HotkeyModifiers are the key names a [[Hotkeys]] combo may list as held
+// conditions; everything else in Keys is the single trigger key. The names
+// are the daemon's key_def spellings, because that is what CTRL stores.
+var HotkeyModifiers = map[string]bool{
+	"L_CTRL": true, "R_CTRL": true,
+	"L_SHIFT": true, "R_SHIFT": true,
+	"L_ALT": true, "R_ALT": true,
+	"L_META": true, "R_META": true,
+	"CAPS": true,
 }
 
 // ActionMatchRe matches "Action.<name>" keys inside [Actions].
@@ -115,6 +128,58 @@ func ParseTOML(data []byte) (*ParsedConfig, error) {
 					return nil, fmt.Errorf("only one action set \"Actions\" is realised for [[WindowClasses]]; unable to serve \"%s\"", wc.Actions)
 				}
 				out.WindowClasses = append(out.WindowClasses, wc)
+			}
+
+		case "AutoReplace":
+			arr, ok := value.([]map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("[[AutoReplace]] must be a slice of sections, not a single [AutoReplace] section")
+			}
+			for _, v := range arr {
+				raw, err := toml.Marshal(v)
+				if err != nil {
+					return nil, fmt.Errorf("unable to parse [[AutoReplace]]:\n%s", err.Error())
+				}
+				ar := TAutoReplace{}
+				if err = toml.Unmarshal(raw, &ar); err != nil {
+					return nil, fmt.Errorf("unable to parse [[AutoReplace]]:\n%s", err.Error())
+				}
+				if ar.Trigger == "" || ar.Replace == "" {
+					return nil, fmt.Errorf("[[AutoReplace]] requires non-empty \"Trigger\" and \"Replace\"")
+				}
+				out.AutoReplace = append(out.AutoReplace, ar)
+			}
+
+		case "Hotkeys":
+			arr, ok := value.([]map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("[[Hotkeys]] must be a slice of sections, not a single [Hotkeys] section")
+			}
+			for _, v := range arr {
+				raw, err := toml.Marshal(v)
+				if err != nil {
+					return nil, fmt.Errorf("unable to parse [[Hotkeys]]:\n%s", err.Error())
+				}
+				hk := THotkey{}
+				if err = toml.Unmarshal(raw, &hk); err != nil {
+					return nil, fmt.Errorf("unable to parse [[Hotkeys]]:\n%s", err.Error())
+				}
+				triggers := 0
+				for _, k := range hk.Keys {
+					if k == "" {
+						return nil, fmt.Errorf("[[Hotkeys]] \"Keys\" must not contain empty names")
+					}
+					if !HotkeyModifiers[k] {
+						triggers++
+					}
+				}
+				if triggers != 1 {
+					return nil, fmt.Errorf("[[Hotkeys]] combo must contain exactly one non-modifier trigger key, got %d: %v", triggers, hk.Keys)
+				}
+				if hk.Action == "" {
+					return nil, fmt.Errorf("[[Hotkeys]] \"Action\" must name an [Action.*] section")
+				}
+				out.Hotkeys = append(out.Hotkeys, hk)
 			}
 
 		case "Actions":
@@ -236,6 +301,13 @@ func ParseTOML(data []byte) (*ParsedConfig, error) {
 	for key := range out.Actions.Custom {
 		if _, ok := out.ActionSet[key]; !ok {
 			return nil, fmt.Errorf("action definition not found for \"Action.%s\"", key)
+		}
+	}
+
+	// A hotkey may only bind to a section that exists.
+	for _, hk := range out.Hotkeys {
+		if _, ok := out.ActionSet[hk.Action]; !ok {
+			return nil, fmt.Errorf("[[Hotkeys]] action definition not found for \"%s\"", hk.Action)
 		}
 	}
 

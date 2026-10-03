@@ -68,6 +68,22 @@ type TAction struct {
 	GID         string
 }
 
+// TAutoReplace maps a typed trigger word to replacement text. Exact rules
+// match the whole completed word; the others match its ending.
+type TAutoReplace struct {
+	Trigger string
+	Replace string
+	Exact   bool
+}
+
+// THotkey binds a global combo (modifier names plus exactly one trigger key)
+// to an [Action.*] section. Recognised modifiers are L_CTRL, R_CTRL, L_SHIFT,
+// R_SHIFT, L_ALT, R_ALT, L_META, R_META and the CAPS lock state.
+type THotkey struct {
+	Keys   []string
+	Action string
+}
+
 // TWayland carries Wayland-specific bypass and layout keys.
 type TWayland struct {
 	BypassX bool `default:"false"`

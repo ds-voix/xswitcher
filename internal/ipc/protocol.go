@@ -21,5 +21,7 @@ type Response struct {
 	Layout       int            `json:"layout"` // current XKB group; 0 is a meaningful value
 	WordBuffer   string         `json:"word_buffer,omitempty"`
 	ActiveWindow string         `json:"active_window,omitempty"`
-	Data         map[string]any `json:"data,omitempty"` // raw TOML content or parsed config for get_config
+	Hotkeys      int            `json:"hotkeys,omitempty"`       // number of [[Hotkeys]] rules in effect
+	AutoReplaces int            `json:"auto_replaces,omitempty"` // number of [[AutoReplace]] rules in effect
+	Data         map[string]any `json:"data,omitempty"`          // raw TOML content or parsed config for get_config
 }

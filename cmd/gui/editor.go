@@ -36,6 +36,8 @@ type configPanel struct {
 	actions       *actionsEditor
 	templates     *templatesEditor
 	actionKeys    *actionKeysEditor
+	autoReplace   *autoReplaceEditor
+	hotkeys       *hotkeysEditor
 }
 
 // newEditorPanel creates the Config tab content. It also returns a load
@@ -103,6 +105,10 @@ func newEditorPanel(client *ipc.Client) (fyne.CanvasObject, func()) {
 	p.templates = tmpls
 	akObj, aks := newActionKeysEditor()
 	p.actionKeys = aks
+	arObj, ars := newAutoReplaceEditor()
+	p.autoReplace = ars
+	hkObj, hks := newHotkeysEditor()
+	p.hotkeys = hks
 
 	// Read-only view of the still-unbound sections (the [Actions] chain).
 	p.rawTOML = widget.NewMultiLineEntry()
@@ -121,6 +127,8 @@ func newEditorPanel(client *ipc.Client) (fyne.CanvasObject, func()) {
 		container.NewTabItem("ActionKeys", akObj),
 		container.NewTabItem("Templates", tmplObj),
 		container.NewTabItem("WindowClasses", wcObj),
+		container.NewTabItem("AutoReplace", arObj),
+		container.NewTabItem("Hotkeys", hkObj),
 		container.NewTabItem("Actions", actObj),
 		container.NewTabItem("Other (raw)", container.NewVScroll(p.rawTOML)),
 	)
@@ -213,6 +221,8 @@ func (p *configPanel) load() {
 	p.actionKeys.load(data)
 	p.templates.load(data)
 	p.windowClasses.load(data)
+	p.autoReplace.load(data)
+	p.hotkeys.load(data)
 	p.actions.load(data)
 
 	p.rawTOML.SetText(renderRawSections(data))
@@ -257,6 +267,8 @@ func (p *configPanel) modsFromWidgets() map[string]any {
 		p.actionKeys.mods(),
 		p.templates.mods(),
 		p.windowClasses.mods(),
+		p.autoReplace.mods(),
+		p.hotkeys.mods(),
 		p.actions.mods(),
 	} {
 		for k, v := range sub {
@@ -315,7 +327,8 @@ func renderRawSections(data map[string]any) string {
 	for key, value := range data {
 		switch key {
 		case "ScanDevices", "Keyboard", "Wayland",
-			"Action", "ActionKeys", "Templates", "WindowClasses":
+			"Action", "ActionKeys", "Templates", "WindowClasses",
+			"AutoReplace", "Hotkeys":
 			continue
 		}
 		filtered[key] = normalizeFloats(value)
