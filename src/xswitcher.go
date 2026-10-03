@@ -97,6 +97,7 @@ type TSequences = cfg.TSequences
 type TAutoReplace = cfg.TAutoReplace
 type THotkey = cfg.THotkey
 type TDiary = cfg.TDiary
+type TAutoDetect = cfg.TAutoDetect
 
 // Scan-codes
 type t_key struct {
@@ -142,6 +143,7 @@ var (
 	AutoReplace []TAutoReplace
 	Hotkeys []THotkey
 	Diary TDiary
+	AutoDetect TAutoDetect
 
 	LANG = 0
 
@@ -314,12 +316,14 @@ func config() {
 	AutoReplace = parsed.AutoReplace
 	Hotkeys = parsed.Hotkeys
 	Diary = parsed.Diary
+	AutoDetect = parsed.AutoDetect
 
 	checkActionCycles()
 	collectManagedLayouts()
 	buildAutoReplace()
 	buildHotkeys()
 	initDiary()
+	buildAutoDetect()
 }
 
 // doAction() expands "Action.xxx" references recursively and has no depth limit, so a
@@ -1091,10 +1095,12 @@ func Switch(A *TAction) {
 	Language(nextLayout(Language(-1), A.Layouts))
 
 	CTRL["WORD"] = true
+	noteManualSwitch()
 }
 
 func Layout(A *TAction) {
 	Language(A.Layout)
+	noteManualSwitch()
 }
 
 // resolveRunAs turns the [Action.X] "run_as" config (UID/GID) into the numeric credentials that
@@ -1141,19 +1147,51 @@ var usGlyphs = map[string]string{
 	"KP5": "5", "KP6": "6", "KP7": "7", "KP8": "8", "KP9": "9",
 }
 
-// bufferToText renders the key events a buffer collected back into the characters they produced,
-// so that an external command can be given the word instead of an internal dump.
-//
-// The evdev codes an event carries name a key POSITION, never a glyph, so the only layout this can
-// spell is the one whose position numbering the daemon was configured against: the US row of the
-// shipped [ActionKeys] Layouts = [0, 1]. A word typed in another group comes out as the latin
-// glyphs of the same physical keys, which is what the replay itself would do. Spelling a non-latin
-// group would mean reading the server's XKB map, and that is a change of its own.
+// glyphFunc spells one key: the canonical name of the position (as key_name
+// records it) and the Shift/CapsLock state in effect, and it returns the
+// character that key produces in its layout, or false for a key that produces
+// none. The evdev codes an event carries name a key POSITION, never a glyph, so
+// every layout this can spell is one whose position table the daemon ships.
+type glyphFunc func(name string, shift, caps bool) (rune, bool)
+
+// usGlyph is the US row of those tables: the layout whose position numbering
+// src/keys.go and the shipped [ActionKeys] Layouts = [0, 1] are written against.
+// A word typed in another group comes out as the latin glyphs of the same
+// physical keys, which is what a replay of the buffer would do. Spelling a group
+// from the server's own XKB map would be a change of its own; the one other
+// script the daemon ships is ruGlyph in src/autodetect.go.
+func usGlyph(name string, shift, caps bool) (rune, bool) {
+	if glyph, ok := usGlyphs[name]; ok {
+		r := rune(glyph[0])
+		if shift && len(glyph) > 1 {
+			r = rune(glyph[1])
+		}
+		return r, true
+	}
+	if len(name) == 1 && name[0] >= 'A' && name[0] <= 'Z' {
+		// A letter is uppercase when exactly one of Shift and CapsLock is in effect.
+		if shift != caps {
+			return rune(name[0]), true
+		}
+		return rune(name[0] - 'A' + 'a'), true
+	}
+	if len(name) == 1 && name[0] >= '0' && name[0] <= '9' { // The names "1".."9" and "0".
+		if shift {
+			return rune(")!@#$%^&*("[name[0]-'0']), true
+		}
+		return rune(name[0]), true
+	}
+	// Anything else (function keys, modifiers, navigation) produced no character.
+	return 0, false
+}
+
+// renderBuffer walks the events a buffer collected and spells them with the given layout table:
+// bufferToText below is the latin one, bufferToRu the Cyrillic one.
 //
 // CapsLock starts from the state the daemon keeps for the machine (getXModifiers() refreshes
 // CTRL from Xkb after every event) and then applies the CAPS presses inside the buffer, so a buffer
 // that toggled it mid-word still renders the way it was typed.
-func bufferToText(buf t_keys) string {
+func renderBuffer(buf t_keys, glyph glyphFunc) string {
 	shift := false
 	caps := CTRL["CAPS"]
 	text := make([]rune, 0, len(buf))
@@ -1192,33 +1230,17 @@ func bufferToText(buf t_keys) string {
 		if k.value != 1 { // Only a press produces a character; its release and any repeat do not.
 			continue
 		}
-		if glyph, ok := usGlyphs[name]; ok {
-			r := rune(glyph[0])
-			if shift && len(glyph) > 1 {
-				r = rune(glyph[1])
-			}
+		if r, ok := glyph(name, shift, caps); ok {
 			text = append(text, r)
-			continue
 		}
-		if len(name) == 1 && name[0] >= 'A' && name[0] <= 'Z' {
-			// A letter is uppercase when exactly one of Shift and CapsLock is in effect.
-			if shift != caps {
-				text = append(text, rune(name[0]))
-			} else {
-				text = append(text, rune(name[0]-'A'+'a'))
-			}
-			continue
-		}
-		if len(name) == 1 && name[0] >= '0' && name[0] <= '9' { // The names "1".."9" and "0".
-			if shift {
-				text = append(text, rune(")!@#$%^&*("[name[0]-'0']))
-			} else {
-				text = append(text, rune(name[0]))
-			}
-		}
-		// Anything else (function keys, modifiers, navigation) produced no character.
 	}
 	return string(text)
+}
+
+// bufferToText renders the key events a buffer collected back into the characters they produced,
+// so that an external command can be given the word instead of an internal dump.
+func bufferToText(buf t_keys) string {
+	return renderBuffer(buf, usGlyph)
 }
 
 func Exec(A *TAction) {
@@ -1463,6 +1485,7 @@ func doWindowActions() {
 			recordDiary(bufferToText(WORD[:len(WORD)-EXTRA]))
 		}
 		tryAutoReplace()
+		tryAutoDetect()
 		newWord()
 		return
 	}
@@ -1759,6 +1782,8 @@ func ipcStatus() ipc.Response {
 		Devices:      devices,
 		Hotkeys:      len(Hotkeys),
 		AutoReplaces: len(AutoReplace),
+		AutoDetects:  len(detectGroupOf),
+		AutoDetected: int(atomic.LoadInt64(&autoDetectFixed)),
 	}
 }
 

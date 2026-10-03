@@ -31,6 +31,8 @@ type Response struct {
 	ActiveWindow string         `json:"active_window,omitempty"`
 	Hotkeys      int            `json:"hotkeys,omitempty"`       // number of [[Hotkeys]] rules in effect
 	AutoReplaces int            `json:"auto_replaces,omitempty"` // number of [[AutoReplace]] rules in effect
+	AutoDetects  int            `json:"auto_detects,omitempty"`  // number of [AutoDetect] Languages entries in effect
+	AutoDetected int            `json:"auto_detected,omitempty"` // words the daemon corrected since it started
 	Data         map[string]any `json:"data,omitempty"`          // raw TOML content or parsed config for get_config
 	Diary        string         `json:"diary,omitempty"`         // diary tail for get_diary
 }

@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/pelletier/go-toml"
@@ -26,6 +27,7 @@ type ParsedConfig struct {
 	Hotkeys       []THotkey
 	Sounds        TSounds
 	Diary         TDiary
+	AutoDetect    TAutoDetect
 }
 
 // SoundEvents are the event kinds the daemon emits; [Sounds] may only bind
@@ -36,6 +38,15 @@ var SoundEvents = map[string]bool{
 	"retype":        true,
 	"auto_replace":  true,
 	"error":         true,
+}
+
+// AutoDetectLanguages are the language codes [AutoDetect] Languages may name.
+// They are the models internal/autodetect ships with and the corpus files under
+// internal/autodetect/corpus/ are named after them, so a code with no table
+// would make the section silently decide nothing.
+var AutoDetectLanguages = map[string]bool{
+	"en": true,
+	"ru": true,
 }
 
 // HotkeyModifiers are the key names a [[Hotkeys]] combo may list as held
@@ -235,6 +246,64 @@ func ParseTOML(data []byte) (*ParsedConfig, error) {
 				return nil, fmt.Errorf("[Diary] \"RotateCount\" must not be negative")
 			}
 
+		case "AutoDetect":
+			// Confidence is the only float in the config, and go-toml v1 refuses
+			// an integer where the struct wants a float64 -- measured: the key
+			// written as "1" failed with `Can't convert 1(int64) to float64`,
+			// while "1.0" is the same TOML number. The set_config path does the
+			// same thing on its own (it turns an integral float back into an
+			// int64), so the value is normalised before the struct is filled.
+			if table, ok := value.(map[string]interface{}); ok {
+				if n, ok := table["Confidence"].(int64); ok {
+					table["Confidence"] = float64(n)
+				}
+			}
+			raw, err := toml.Marshal(value)
+			if err != nil {
+				return nil, fmt.Errorf("unable to parse [AutoDetect]:\n%s", err.Error())
+			}
+			if err = toml.Unmarshal(raw, &out.AutoDetect); err != nil {
+				return nil, fmt.Errorf("unable to parse [AutoDetect]:\n%s", err.Error())
+			}
+			// go-toml fills an absent key from its `default` tag (measured: a
+			// [Diary] without MaxSizeMB arrives as 10), so the two thresholds
+			// below only see the shipped defaults or what the user wrote.
+			if out.AutoDetect.MinChars < 2 {
+				return nil, fmt.Errorf("[AutoDetect] \"MinChars\" must be at least 2: a shorter run holds no letter bigram to score")
+			}
+			if out.AutoDetect.Confidence <= 0 || out.AutoDetect.Confidence > 1 {
+				return nil, fmt.Errorf("[AutoDetect] \"Confidence\" must be above 0 and at most 1, got %v", out.AutoDetect.Confidence)
+			}
+			groups := make(map[int]bool, len(out.AutoDetect.Languages))
+			langs := make(map[string]bool, len(out.AutoDetect.Languages))
+			for _, item := range out.AutoDetect.Languages {
+				c := strings.Split(item, ":")
+				if len(c) != 2 {
+					return nil, fmt.Errorf("[AutoDetect] Languages entry %q must be \"<group>:<language>\"", item)
+				}
+				g, err := strconv.Atoi(strings.TrimSpace(c[0]))
+				if err != nil || g < 0 {
+					return nil, fmt.Errorf("[AutoDetect] Languages entry %q: the group must be a non-negative integer", item)
+				}
+				lang := strings.TrimSpace(c[1])
+				if !AutoDetectLanguages[lang] {
+					return nil, fmt.Errorf("[AutoDetect] Languages entry %q: no model for %q (known: en, ru)", item, lang)
+				}
+				// One group per language and one language per group: the daemon
+				// has to name the group a detected language lives in, and two
+				// entries naming the same one would leave that undecided.
+				if groups[g] {
+					return nil, fmt.Errorf("[AutoDetect] Languages: group %d is named twice", g)
+				}
+				if langs[lang] {
+					return nil, fmt.Errorf("[AutoDetect] Languages: language %q is named twice; the switch target would be ambiguous", lang)
+				}
+				groups[g], langs[lang] = true, true
+			}
+			if out.AutoDetect.Enabled && len(out.AutoDetect.Languages) < 2 {
+				return nil, fmt.Errorf("[AutoDetect] \"Enabled\" needs at least two Languages entries; with one there is no layout to correct to")
+			}
+
 		case "Actions":
 			t, ok := value.(map[string]interface{})
 			if !ok {
@@ -362,6 +431,15 @@ func ParseTOML(data []byte) (*ParsedConfig, error) {
 		if _, ok := out.ActionSet[hk.Action]; !ok {
 			return nil, fmt.Errorf("[[Hotkeys]] action definition not found for \"%s\"", hk.Action)
 		}
+	}
+
+	// Auto-detection decides on the XKB group a word was typed in. Under
+	// [Wayland] BypassX the daemon cannot read a group at all — Language() there
+	// reports only the switch it made itself — so the section would act on a
+	// guess. This cannot live in the case above: the two sections arrive in map
+	// iteration order, which is random.
+	if out.AutoDetect.Enabled && out.Wayland.BypassX {
+		return nil, fmt.Errorf("[AutoDetect] cannot be Enabled together with [Wayland] BypassX = true: the layout is not observable there")
 	}
 
 	return out, nil

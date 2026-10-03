@@ -122,3 +122,72 @@ func TestParseSoundsAndDiaryRejectInvalid(t *testing.T) {
 		}
 	}
 }
+
+func TestParseAutoDetect(t *testing.T) {
+	parsed, err := ParseTOML([]byte("[AutoDetect]\nEnabled = true\nLanguages = [\"0:en\", \"1:ru\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ad := parsed.AutoDetect
+	if !ad.Enabled || len(ad.Languages) != 2 {
+		t.Errorf("section not read: %+v", ad)
+	}
+	// The thresholds are the shipped brakes, so an absent key must not arrive as
+	// Go's zero: 0 would detect every two-key run and accept any margin.
+	if ad.MinChars != 5 {
+		t.Errorf("MinChars default: %d", ad.MinChars)
+	}
+	if ad.Confidence != 0.2 {
+		t.Errorf("Confidence default: %v", ad.Confidence)
+	}
+
+	parsed, err = ParseTOML([]byte("[AutoDetect]\nMinChars = 7\nConfidence = 0.45\nLanguages = [\"2:ru\", \"3:en\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.AutoDetect.MinChars != 7 || parsed.AutoDetect.Confidence != 0.45 {
+		t.Errorf("explicit thresholds not kept: %+v", parsed.AutoDetect)
+	}
+	if parsed.AutoDetect.Enabled {
+		t.Errorf("Enabled must stay off unless the config turns it on")
+	}
+	// Rules may be listed while the feature is off: that is how a config is
+	// prepared before it is switched on, and nothing acts on them.
+	parsed, err = ParseTOML([]byte("[AutoDetect]\nLanguages = [\"0:en\"]\n"))
+	if err != nil {
+		t.Fatalf("one entry with Enabled off: %v", err)
+	}
+	if len(parsed.AutoDetect.Languages) != 1 {
+		t.Errorf("Languages not read: %+v", parsed.AutoDetect)
+	}
+}
+
+func TestParseAutoDetectRejectsInvalid(t *testing.T) {
+	cases := []struct {
+		name   string
+		body   string
+		wanted string
+	}{
+		{"entry without a group", "[AutoDetect]\nLanguages = [\"en\"]\n", `must be "<group>:<language>"`},
+		{"group not an integer", "[AutoDetect]\nLanguages = [\"first:en\"]\n", "non-negative integer"},
+		{"negative group", "[AutoDetect]\nLanguages = [\"-1:en\"]\n", "non-negative integer"},
+		{"language with no model", "[AutoDetect]\nLanguages = [\"0:de\"]\n", `no model for "de"`},
+		{"group named twice", "[AutoDetect]\nLanguages = [\"0:en\", \"0:ru\"]\n", "group 0 is named twice"},
+		{"language named twice", "[AutoDetect]\nLanguages = [\"0:en\", \"1:en\"]\n", "language \"en\" is named twice"},
+		{"enabled with one entry", "[AutoDetect]\nEnabled = true\nLanguages = [\"0:en\"]\n", "at least two Languages"},
+		{"MinChars below the signal", "[AutoDetect]\nMinChars = 1\n", "at least 2"},
+		{"Confidence zero", "[AutoDetect]\nConfidence = 0\n", "above 0"},
+		{"Confidence above one", "[AutoDetect]\nConfidence = 1.5\n", "at most 1"},
+		{"wayland bypass", "[AutoDetect]\nEnabled = true\nLanguages = [\"0:en\", \"1:ru\"]\n\n[Wayland]\nBypassX = true\n", "not observable"},
+	}
+	for _, tc := range cases {
+		_, err := ParseTOML([]byte(tc.body))
+		if err == nil {
+			t.Errorf("%s: accepted invalid config", tc.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.wanted) {
+			t.Errorf("%s: error %q does not mention %q", tc.name, err.Error(), tc.wanted)
+		}
+	}
+}

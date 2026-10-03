@@ -101,6 +101,26 @@ type TDiary struct {
 	RotateCount int `default:"3"`
 }
 
+// TAutoDetect configures the automatic layout correction. When a completed word
+// fits another declared language's letter model better than the language it was
+// actually typed in, the daemon selects that group and retypes the word.
+//
+// Languages names the participating groups as "<group>:<code>" pairs ("0:en",
+// "1:ru"). The group number alone cannot say what it types — XKB group 1 is
+// whatever the user put there — while the detector only knows the letter models
+// listed in AutoDetectLanguages, so both halves have to come from the config.
+//
+// MinChars and Confidence are the two brakes against false positives: a run
+// shorter than MinChars has too few letter bigrams to say anything (measured:
+// four-key noise reaches the same margin as a real word), and a margin below
+// Confidence leaves the decision to the user.
+type TAutoDetect struct {
+	Enabled    bool
+	MinChars   int     `default:"5"`
+	Confidence float64 `default:"0.2"`
+	Languages  []string
+}
+
 // TWayland carries Wayland-specific bypass and layout keys.
 type TWayland struct {
 	BypassX bool `default:"false"`

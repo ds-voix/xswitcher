@@ -24,6 +24,106 @@ check() { # check <name> <0|1>
     if [ "$2" = "0" ]; then say "$1" "PASS"; else say "$1" "FAIL"; FAILED=1; fi
 }
 
+# respawn reloads the daemon (Respawn: fork+exec of the same argv) and waits for
+# the child to answer on the socket again. RESPAWN_STAGE carries the name of the
+# step that failed, so callers can report it as their own check.
+respawn() {
+    RESPAWN_STAGE="reload accepted"
+    python3 - "$SOCK" <<'PY' || return 1
+import json, socket, sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.connect(sys.argv[1])
+s.sendall(b'{"cmd":"reload"}\n')
+buf = b""
+while not buf.endswith(b"\n"):
+    d = s.recv(4096)
+    if not d: sys.exit(1)
+    buf += d
+r = json.loads(buf)
+# A Phase 4 check reloads the daemon: the trap PID is the parent that exited, the
+# live process is the respawned child, so cleanup has to follow it.
+if r.get("ok") and r.get("pid"):
+    open("/tmp/smoke-child.pid", "w").write(str(r["pid"]))
+sys.exit(0 if r.get("ok") else 1)
+PY
+    RESPAWN_STAGE="daemon back after respawn"
+    for _ in $(seq 40); do
+        python3 - "$SOCK" <<'PY' && return 0
+import json, socket, sys
+try:
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(2)
+    s.connect(sys.argv[1])
+    s.sendall(b'{"cmd":"ping"}\n')
+    buf = b""
+    while not buf.endswith(b"\n"):
+        d = s.recv(4096)
+        if not d: sys.exit(1)
+        buf += d
+    sys.exit(0 if json.loads(buf).get("ok") else 1)
+except Exception:
+    sys.exit(1)
+PY
+        sleep 0.5
+    done
+    return 1
+}
+
+# set_config sends one mods dict over the socket; the exit code is the response's ok.
+set_config() { # set_config '<json of the mods dict>'
+    python3 - "$SOCK" "$1" <<'PY' || return 1
+import json, socket, sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.connect(sys.argv[1])
+mods = json.loads(sys.argv[2])
+s.sendall((json.dumps({"cmd": "set_config", "data": mods}) + "\n").encode())
+buf = b""
+while not buf.endswith(b"\n"):
+    d = s.recv(4096)
+    if not d: sys.exit(1)
+    buf += d
+r = json.loads(buf)
+if not r.get("ok"): print("set_config refused:", r.get("error"), file=sys.stderr)
+sys.exit(0 if r.get("ok") else 1)
+PY
+}
+
+# status_value prints one field of the live status response, and the whole
+# response when the field is not there: a missing counter is exactly the case a
+# report has to explain by itself.
+status_value() { # status_value <field>
+    python3 - "$SOCK" <<PY
+import json, socket, sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.connect(sys.argv[1])
+s.sendall(b'{"cmd":"status"}\n')
+buf = b""
+while not buf.endswith(b"\n"):
+    d = s.recv(4096)
+    if not d: sys.exit(1)
+    buf += d
+d = json.loads(buf)
+v = d.get("$1")
+print(v if v is not None else "no \"$1\" in " + json.dumps(d))
+PY
+}
+
+# wait_status <field> <min> polls the live status until the numeric field reaches
+# <min> and prints it. The correction is not one atomic step on the outside: Language()
+# moves the group first and only the finished RetypeWord replay raises the counter, so a
+# single status read right after the group has moved can land inside that window. Polling
+# is what makes the assertion about the counter mean the counter and nothing else.
+wait_status() { # wait_status <field> <min>
+    v=""
+    for _ in $(seq 20); do
+        v=$(status_value "$1")
+        if [ "${v:-x}" -ge "$2" ] 2>/dev/null; then echo "$v"; return 0; fi
+        sleep 0.25
+    done
+    echo "${v:-no field read} did not reach $2"
+    return 1
+}
+
 source_path() { # node of the stand source keyboard, whatever eventN it got
     NAME="stand-source-keyboard" python3 - <<'PY'
 import os, sys, evdev
@@ -91,7 +191,10 @@ GOFLAGS=-buildvcs=false go build -o "$DAEMON" ./src/ >/tmp/smoke-build.log 2>&1
 
 echo "--- 4. daemon + smoke ---"
 rm -f "$SOCK"
-XSWITCHER_SOCK="$SOCK" "$DAEMON" -c "$CONF" >"$LOG" 2>&1 &
+# DAEMON_ARGS carries nothing by default; `DAEMON_ARGS=-v` on the command line runs
+# the whole smoke with the daemon's own log open, which is how a live Phase 5
+# correction (or any refused decision) is read back.
+XSWITCHER_SOCK="$SOCK" "$DAEMON" ${DAEMON_ARGS:-} -c "$CONF" >"$LOG" 2>&1 &
 DAEMON_PID=$!
 for _ in $(seq 20); do [ -S "$SOCK" ] && break; sleep 0.3; done
 [ -S "$SOCK" ]; check "daemon listening on $SOCK" "$?"
@@ -108,46 +211,9 @@ echo "--- 5. p4 live diary ---"
 # is with real key events on the source device.
 DIARY=/tmp/GuiSmoke.diary.txt
 rm -f "$DIARY" /tmp/smoke-child.pid
-python3 - "$SOCK" <<'PY'
-import json, socket, sys
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.connect(sys.argv[1])
-s.sendall(b'{"cmd":"reload"}\n')
-buf = b""
-while not buf.endswith(b"\n"):
-    d = s.recv(4096)
-    if not d: sys.exit(1)
-    buf += d
-r = json.loads(buf)
-if r.get("ok") and r.get("pid"):
-    open("/tmp/smoke-child.pid", "w").write(str(r["pid"]))
-sys.exit(0 if r.get("ok") else 1)
-PY
-check "p4 reload accepted" "$?"
-
-UP=1
-for _ in $(seq 40); do
-    python3 - "$SOCK" <<'PY'
-import json, socket, sys
-try:
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.settimeout(2)
-    s.connect(sys.argv[1])
-    s.sendall(b'{"cmd":"ping"}\n')
-    buf = b""
-    while not buf.endswith(b"\n"):
-        d = s.recv(4096)
-        if not d: sys.exit(1)
-        buf += d
-    sys.exit(0 if json.loads(buf).get("ok") else 1)
-except Exception:
-    sys.exit(1)
-PY
-    [ $? = 0 ] && { UP=0; break; }
-    sleep 0.5
-done
-check "p4 daemon back after respawn" "$UP"
-[ "$UP" = "0" ] || { say "FATAL: daemon gone after reload" ""; tail -20 "$LOG"; exit 9; }
+respawn; RC=$?
+check "p4 $RESPAWN_STAGE" "$RC"
+[ "$RC" = "0" ] || { say "FATAL: daemon gone after reload" ""; tail -20 "$LOG"; exit 9; }
 
 sleep 1   # let the respawned daemon attach the source device before typing
 # The default NewWord rule 1 completes a word on the first key of the NEXT
@@ -171,6 +237,58 @@ r = json.loads(buf)
 sys.exit(0 if r.get("ok") and "qwerty" in r.get("diary", "") else 1)
 PY
 check "p4 get_diary serves the word" "$?"
+
+echo "--- 6. p5 live auto-detect ---"
+# stand/ipcsmoke.py left [AutoDetect] with two declared languages and the shipped
+# brakes, Enabled off. The correction is the one Phase 5 check that needs a real
+# display: the detector only acts on the group a word came in on, so the stand
+# loads the second layout here and an independent reader (xgroup) says where the
+# server was before and after the typing. Nothing about the group is simulated.
+gcc stand/xgroup.c -o /tmp/xgroup -lX11 >/tmp/smoke-xgroup.log 2>&1
+check "p5 xgroup built" "$?"
+setxkbmap -layout us,ru >/tmp/smoke-setxkbmap.log 2>&1
+check "p5 the display holds two layouts" "$?"
+/tmp/xgroup info 25 2>&1 | grep -q "key 25 groups 2"
+check "p5 the typed key has two groups" "$?"
+/tmp/xgroup set 0 >/dev/null 2>&1
+/tmp/xgroup get until 0 3 >/dev/null; check "p5 precondition: the server is on group 0" "$?"
+
+set_config '{"AutoDetect.Enabled": true}'
+check "p5 auto-detect enabled over IPC" "$?"
+respawn; RC=$?
+check "p5 $RESPAWN_STAGE" "$RC"
+[ "$RC" = "0" ] || { say "FATAL: daemon gone after the p5 reload" ""; tail -20 "$LOG"; exit 9; }
+sleep 1   # let the respawned daemon attach the source device before typing
+
+# The six keys of the russian word привет carry "ghbdtn" while the machine is on
+# the latin group. The shipped models read that run as Russian at 0.379, above the
+# 0.2 threshold, and the spare letter at the end is what completes the word
+# (NewWord rule 1 fires on the first key of the next one).
+python3 stand/source_key.py play "$SRC" "G,H,B,D,T,N,SPACE,R" >/dev/null 2>&1
+check "p5 keys played" "$?"
+/tmp/xgroup get until 1 5 >/dev/null
+check "p5 the live server moved to group 1" "$?"
+DETECTS=$(status_value auto_detects)
+[ "$DETECTS" = "2" ]; check "p5 status names the two declared groups" "$?"
+DETECTED=$(wait_status auto_detected 1)
+# Exactly one: play1 is the only mistyped word in this phase.
+[ "$DETECTED" = "1" ]; check "p5 status counted exactly the one correction ($DETECTED)" "$?"
+
+# The negative control, on the group the detector itself chose: the same six keys
+# now spell the word right and must be left alone. The diary line is what makes
+# that assertion mean something -- without it a counter that does not move could
+# just as well mean no word was completed at all.
+BEFORE=$(grep -c ghbdtn "$DIARY" 2>/dev/null); BEFORE=${BEFORE:-0}
+python3 stand/source_key.py play "$SRC" "G,H,B,D,T,N,SPACE,R" >/dev/null 2>&1
+check "p5 second word played" "$?"
+sleep 1
+AFTER=$(grep -c ghbdtn "$DIARY" 2>/dev/null); AFTER=${AFTER:-0}
+[ "$AFTER" -gt "$BEFORE" ] 2>/dev/null
+check "p5 the correct word was completed anyway ($BEFORE -> $AFTER)" "$?"
+[ "$(status_value auto_detected)" = "$DETECTED" ]
+check "p5 a correctly typed word was left alone" "$?"
+/tmp/xgroup get 2>&1 | grep -q "^group 1 "
+check "p5 the server is still on group 1" "$?"
 
 if [ "$FAILED" = "0" ]; then echo "SMOKE_EXIT=0 ALL GREEN"; else echo "SMOKE_EXIT=1"; tail -20 "$LOG"; fi
 exit "$FAILED"

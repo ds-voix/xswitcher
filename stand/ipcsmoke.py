@@ -4,7 +4,8 @@
 # socket: ping/status, get_config/set_config/validate, comment preservation,
 # rejection of an invalid mod, dotted paths into [Action.*] tables, the
 # whole-array rewrite of [[WindowClasses]], the AutoReplace/Hotkeys arrays,
-# the [Sounds]/[Diary] gates and the subscribe push channel.
+# the [Sounds]/[Diary] gates, the subscribe push channel and the [AutoDetect]
+# gate (its live correction is in stand/smoke.sh, which has real key events).
 import json
 import socket
 import sys
@@ -100,6 +101,12 @@ def header_count(text, name):
     return sum(1 for ln in text.splitlines() if ln.lstrip().startswith(f"[[{name}]]"))
 
 
+def uncommented(text):
+    # Same reason for single keys: "# MinChars = 5" is an example, not a value the
+    # daemon will read, and a plain substring test cannot tell the two apart.
+    return "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+
+
 check("p3 autoreplace written", header_count(body3, "AutoReplace") == 2 and 'Trigger = "btw"' in body3)
 check("p3 hotkey written", header_count(body3, "Hotkeys") == 1 and 'Action = "Layout0"' in body3)
 check("p3 comment still kept", "# precious comment" in body3)
@@ -141,8 +148,11 @@ r = req(s, {"cmd": "set_config", "data": {
 check("p4 sounds+diary set", r["ok"], str(r)[:120])
 body4 = open(CFG).read()
 check("p4 sounds written", 'layout_switch = "/tmp/switch.wav"' in body4)
-check("p4 diary written", "Enabled = true" in body4 and f'Path = "{DIARY}"' in body4
-      and "MaxSizeMB = 2" in body4)
+# "Enabled = true" needs the uncommented view: the shipped config shows it as an
+# example under [Diary] and again under [AutoDetect], so a raw substring test
+# would pass on a file where the write never happened.
+check("p4 diary written", "Enabled = true" in uncommented(body4)
+      and f'Path = "{DIARY}"' in body4 and "MaxSizeMB = 2" in body4)
 check("p4 comment still kept", "# precious comment" in body4)
 
 r = req(s, {"cmd": "get_config"})
@@ -166,6 +176,66 @@ check("p4 ping on subscribed conn", req(sub, {"cmd": "ping"}).get("ok"))
 sub.close()
 
 check("p4 validate", req(s, {"cmd": "validate"})["ok"])
+
+# Phase 5: the [AutoDetect] gate. Enabled needs two declared groups, a group has
+# to be a number and may only be named once, the language has to be one the
+# models know, Confidence has to be a positive number at most 1, and the section
+# cannot be on while the layout is unobservable. The last write leaves the
+# section configured with the shipped brakes and Enabled = false: the live
+# correction is stand/smoke.sh's job, and it switches the feature on itself.
+before5 = open(CFG).read()
+for name, mods in [
+    ("one language with Enabled", {"AutoDetect.Enabled": True,
+                                   "AutoDetect.Languages": ["0:en"]}),
+    ("entry without a group", {"AutoDetect.Languages": ["en"]}),
+    ("group that is not a number", {"AutoDetect.Languages": ["x:en"]}),
+    ("negative group", {"AutoDetect.Languages": ["-1:en"]}),
+    ("language with no model", {"AutoDetect.Languages": ["0:de"]}),
+    ("group named twice", {"AutoDetect.Languages": ["0:en", "0:ru"]}),
+    ("language named twice", {"AutoDetect.Languages": ["0:en", "1:en"]}),
+    ("MinChars below 2", {"AutoDetect.MinChars": 1.0}),
+    ("Confidence of 0", {"AutoDetect.Confidence": 0.0}),
+    ("Confidence above 1", {"AutoDetect.Confidence": 1.5}),
+    ("Enabled with the layout unobservable", {"AutoDetect.Enabled": True,
+                                              "Wayland.BypassX": True}),
+]:
+    r = req(s, {"cmd": "set_config", "data": mods})
+    check(f"p5 {name} rejected", not r["ok"], r.get("error", "")[:80])
+check("p5 file untouched after rejects", open(CFG).read() == before5)
+
+r = req(s, {"cmd": "set_config", "data": {
+    "AutoDetect.Languages": ["0:en", "1:ru"],
+    "AutoDetect.MinChars": 6.0,
+    "AutoDetect.Confidence": 0.35,
+}})
+check("p5 section written", r["ok"], str(r)[:120])
+body5 = open(CFG).read()
+check("p5 languages written", 'Languages = ["0:en", "1:ru"]' in uncommented(body5))
+check("p5 numbers written", "MinChars = 6" in uncommented(body5)
+      and "Confidence = 0.35" in uncommented(body5))
+r = req(s, {"cmd": "get_config"})
+ad = r.get("data", {}).get("AutoDetect")
+# get_config is the file, not the parsed struct, so the defaults the daemon fills
+# in are absent here -- and Enabled has to be one of them until smoke.sh turns it
+# on for the live correction.
+check("p5 get_config shows the section", isinstance(ad, dict)
+      and ad.get("Languages") == ["0:en", "1:ru"] and ad.get("MinChars") == 6
+      and abs(float(ad.get("Confidence", 0)) - 0.35) < 1e-9
+      and "Enabled" not in ad, str(ad))
+
+# The shipped brakes, so that stand/smoke.sh judges the live word by the
+# thresholds the config file documents rather than by a tightened pair.
+r = req(s, {"cmd": "set_config", "data": {
+    "AutoDetect.MinChars": 5.0, "AutoDetect.Confidence": 0.2,
+}})
+check("p5 defaults written back", r["ok"], str(r)[:120])
+body5 = open(CFG).read()
+# No "Enabled" clause here: [Diary] wrote its own uncommented "Enabled = true"
+# above, so only get_config can say whether THIS section has one.
+check("p5 defaults in the file", "MinChars = 5" in uncommented(body5)
+      and "Confidence = 0.2" in uncommented(body5))
+check("p5 comment still kept", "# precious comment" in body5)
+check("p5 validate", req(s, {"cmd": "validate"})["ok"])
 
 s.close()
 sys.exit(1 if failures else 0)
