@@ -35,4 +35,9 @@ type Response struct {
 	AutoDetected int            `json:"auto_detected,omitempty"` // words the daemon corrected since it started
 	Data         map[string]any `json:"data,omitempty"`          // raw TOML content or parsed config for get_config
 	Diary        string         `json:"diary,omitempty"`         // diary tail for get_diary
+	// Readings is the word buffer spelled in each [AutoDetect] language the
+	// config declares, so the GUI can preview a verdict. It is nil while
+	// detection is off, and it carries no text the buffer does not already hold:
+	// these are the same physical keys read in another script.
+	Readings map[string]string `json:"readings,omitempty"`
 }

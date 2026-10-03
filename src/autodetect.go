@@ -105,6 +105,28 @@ func buildAutoDetect() {
 	}
 }
 
+// detectReadings spells the buffer the user is filling right now in every
+// language [AutoDetect] declares, for the GUI's preview. It is the same
+// renderBuffer call autoDetectWord makes on a completed word, run over the
+// whole buffer instead because a preview wants the word in progress rather than
+// the last finished one.
+//
+// The status snapshot calls it on the key path, so the guard matters: a
+// detection the config switched off must not cost a buffer walk per keystroke.
+// The two readings of the same keys are not a second copy of what the status
+// already publishes either -- WordBuffer is one rendering of the same physical
+// presses, and this names what the other renderings look like.
+func detectReadings() map[string]string {
+	if !AutoDetect.Enabled || len(detectGroupOf) < 2 {
+		return nil
+	}
+	readings := make(map[string]string, len(detectGroupOf))
+	for lang := range detectGroupOf {
+		readings[lang] = renderBuffer(WORD, detectSpellings[lang])
+	}
+	return readings
+}
+
 // noteManualSwitch arms the grace a hand-driven layout change gets. Switch and
 // Layout are what the user's own keys and the config's SEQ rules run when they
 // take the layout into their own hands; the word typed right after that is what

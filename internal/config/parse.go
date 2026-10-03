@@ -49,6 +49,28 @@ var AutoDetectLanguages = map[string]bool{
 	"ru": true,
 }
 
+// DefaultAutoDetect returns the [AutoDetect] values a section that names no keys
+// runs with. Those numbers are written in exactly one place -- the struct tags --
+// and go-toml reads them during Unmarshal, so this asks the same unmarshal
+// instead of repeating 5 and 0.2: the GUI's preview has to judge a word by the
+// pair the daemon uses, and a second copy of the numbers could go stale with
+// nothing failing.
+//
+// The tags only apply through this path. A file with no [AutoDetect] section at
+// all parses to the zero struct, because ParseTOML unmarshals a section it found
+// and never the document as a whole -- measured, not assumed. Enabled staying
+// false is what makes that harmless: without it no word is judged at all.
+func DefaultAutoDetect() TAutoDetect {
+	var ad TAutoDetect
+	// An empty document has nothing to fail on; a failure here means the tags
+	// stopped being read, which is a bug in the binary and must not hand the
+	// caller zeros that silently drop both brakes.
+	if err := toml.Unmarshal([]byte(""), &ad); err != nil {
+		panic(fmt.Sprintf("config: [AutoDetect] defaults do not parse: %v", err))
+	}
+	return ad
+}
+
 // HotkeyModifiers are the key names a [[Hotkeys]] combo may list as held
 // conditions; everything else in Keys is the single trigger key. The names
 // are the daemon's key_def spellings, because that is what CTRL stores.

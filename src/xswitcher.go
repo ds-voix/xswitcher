@@ -1726,9 +1726,10 @@ func Respawn(*TAction) { // Completelly respawn xswitcher.
 
 // The live status exposed to the GUI is split into two snapshots:
 //
-//   - coreSnapshot (layout, word buffer, active window) mirrors globals that
-//     only the serve() goroutine mutates, so it is only ever written from that
-//     goroutine (and once at startup before serve() begins).
+//   - coreSnapshot (layout, word buffer, active window, [AutoDetect] readings)
+//     mirrors globals that only the serve() goroutine mutates, so it is only
+//     ever written from that goroutine (and once at startup before serve()
+//     begins).
 //   - devicesSnapshot mirrors the `attached` map, which readers and the device
 //     watcher mutate under attachedMu. It is refreshed on every attach/detach
 //     so device changes are visible even while no key event wakes serve().
@@ -1736,6 +1737,10 @@ type statusCore struct {
 	Lang   int
 	Word   string
 	Window string
+	// Readings is the same buffer spelled in each [AutoDetect] language, so the
+	// GUI can preview a verdict without owning the glyph tables. See
+	// detectReadings for when it is filled.
+	Readings map[string]string
 }
 
 var (
@@ -1756,9 +1761,10 @@ func updateDevicesSnapshot() {
 
 func updateStatusSnapshot() {
 	coreSnapshot.Store(statusCore{
-		Lang:   LANG,
-		Word:   bufferToText(WORD),
-		Window: ActiveWindowClass,
+		Lang:     LANG,
+		Word:     bufferToText(WORD),
+		Window:   ActiveWindowClass,
+		Readings: detectReadings(),
 	})
 	updateDevicesSnapshot()
 }
@@ -1779,6 +1785,7 @@ func ipcStatus() ipc.Response {
 		Layout:       core.Lang,
 		WordBuffer:   core.Word,
 		ActiveWindow: core.Window,
+		Readings:     core.Readings,
 		Devices:      devices,
 		Hotkeys:      len(Hotkeys),
 		AutoReplaces: len(AutoReplace),

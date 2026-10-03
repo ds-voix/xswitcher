@@ -191,3 +191,24 @@ func TestParseAutoDetectRejectsInvalid(t *testing.T) {
 		}
 	}
 }
+
+// TestDefaultAutoDetect pins the pair the GUI preview judges a word by, and it
+// is worth two assertions because the mechanism has a trap measured during this
+// phase: a document with no [AutoDetect] section at all parses to the zero
+// struct, so an implementation that reached for ParseTOML(nil) would hand out
+// MinChars 0 and Confidence 0 -- both brakes off -- and nothing else would fail.
+func TestDefaultAutoDetect(t *testing.T) {
+	def := DefaultAutoDetect()
+	if def.MinChars != 5 || def.Confidence != 0.2 {
+		t.Errorf("defaults: got MinChars %d Confidence %v, want 5 and 0.2", def.MinChars, def.Confidence)
+	}
+	// The same pair is what the daemon runs a present-but-keyless section with.
+	parsed, err := ParseTOML([]byte("[AutoDetect]\nLanguages = [\"0:en\", \"1:ru\"]\n"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if parsed.AutoDetect.MinChars != def.MinChars || parsed.AutoDetect.Confidence != def.Confidence {
+		t.Errorf("the section path gives MinChars %d Confidence %v, the tags give %d/%v",
+			parsed.AutoDetect.MinChars, parsed.AutoDetect.Confidence, def.MinChars, def.Confidence)
+	}
+}

@@ -88,6 +88,26 @@ sys.exit(0 if r.get("ok") else 1)
 PY
 }
 
+# readings_value prints one [AutoDetect] reading of the live word buffer. It tells
+# the three states apart on purpose -- "none" when the daemon sent no readings map
+# at all, "absent" when the map has no such language, and the reading otherwise --
+# because a check that only compared against a string would pass on the wrong one.
+readings_value() { # readings_value <language>
+    python3 - "$SOCK" "$1" <<'PY'
+import json, socket, sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.connect(sys.argv[1])
+s.sendall(b'{"cmd":"status"}\n')
+buf = b""
+while not buf.endswith(b"\n"):
+    d = s.recv(4096)
+    if not d: sys.exit(1)
+    buf += d
+readings = json.loads(buf).get("readings")
+print("none" if readings is None else readings.get(sys.argv[2], "absent"))
+PY
+}
+
 # status_value prints one field of the live status response, and the whole
 # response when the field is not there: a missing counter is exactly the case a
 # report has to explain by itself.
@@ -253,6 +273,11 @@ check "p5 the typed key has two groups" "$?"
 /tmp/xgroup set 0 >/dev/null 2>&1
 /tmp/xgroup get until 0 3 >/dev/null; check "p5 precondition: the server is on group 0" "$?"
 
+# A detector the config has not switched on sends no readings at all, so the GUI
+# can tell "off" apart from "on and the buffer is empty".
+[ "$(readings_value en)" = "none" ]
+check "p5 status carries no readings while the detector is off" "$?"
+
 set_config '{"AutoDetect.Enabled": true}'
 check "p5 auto-detect enabled over IPC" "$?"
 respawn; RC=$?
@@ -289,6 +314,14 @@ check "p5 the correct word was completed anyway ($BEFORE -> $AFTER)" "$?"
 check "p5 a correctly typed word was left alone" "$?"
 /tmp/xgroup get 2>&1 | grep -q "^group 1 "
 check "p5 the server is still on group 1" "$?"
+
+# The last key of that play is the first key of the next word, so the buffer the
+# status reports now holds one physical position: keys.go names it R, the latin
+# table spells it r and the Cyrillic table к. One press, two readings -- exactly
+# what the GUI's preview panel prints without owning a glyph table of its own.
+EN=$(readings_value en); RU=$(readings_value ru)
+[ "$EN" = "r" ] && [ "$RU" = "к" ]
+check "p5 readings spell the buffered key in both scripts (en=$EN ru=$RU)" "$?"
 
 if [ "$FAILED" = "0" ]; then echo "SMOKE_EXIT=0 ALL GREEN"; else echo "SMOKE_EXIT=1"; tail -20 "$LOG"; fi
 exit "$FAILED"
