@@ -119,6 +119,7 @@ func tryAutoReplace() bool {
 	wipeText(visible)
 	typeText(replacement + visible[len(completed):])
 	WORD = nil
+	sendSound("auto_replace")
 	if *VERBOSE || *DEBUG {
 		fmt.Printf("AutoReplace: %q >> %q\n", completed, replacement)
 	}

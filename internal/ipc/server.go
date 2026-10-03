@@ -33,6 +33,32 @@ type SetConfigFunc func(mods map[string]any) error
 // ValidateFunc performs a dry-run parse of the current config for "validate".
 type ValidateFunc func() error
 
+// DiaryFunc returns the current diary content for "get_diary".
+type DiaryFunc func() (string, error)
+
+// connWriter serialises every write to one connection: dispatch responses
+// and Broadcast pushes run on different goroutines and their lines must not
+// interleave.
+type connWriter struct {
+	mu   sync.Mutex
+	conn net.Conn
+}
+
+func (w *connWriter) writeLine(data []byte) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	_, err := w.conn.Write(data)
+	return err
+}
+
+func (w *connWriter) write(resp Response) {
+	data, err := json.Marshal(resp)
+	if err != nil {
+		return
+	}
+	_ = w.writeLine(append(data, '\n'))
+}
+
 // Server listens on a Unix domain socket and dispatches incoming commands.
 type Server struct {
 	path        string
@@ -41,8 +67,11 @@ type Server struct {
 	configFn    ConfigFunc
 	setConfigFn SetConfigFunc
 	validateFn  ValidateFunc
+	diaryFn     DiaryFunc
 	listener    net.Listener
 	mu          sync.Mutex
+	conns       map[net.Conn]*connWriter // every live connection's shared writer
+	subs        map[*connWriter]struct{} // connections that sent "subscribe"
 }
 
 // NewServer creates an IPC server bound to the given socket path.
@@ -51,6 +80,8 @@ func NewServer(path string, statusFn StatusFunc, reloadFn ReloadFunc) *Server {
 		path:     path,
 		statusFn: statusFn,
 		reloadFn: reloadFn,
+		conns:    make(map[net.Conn]*connWriter),
+		subs:     make(map[*connWriter]struct{}),
 	}
 }
 
@@ -59,6 +90,11 @@ func (s *Server) SetConfigHandler(cfgFn ConfigFunc, setFn SetConfigFunc, valFn V
 	s.configFn = cfgFn
 	s.setConfigFn = setFn
 	s.validateFn = valFn
+}
+
+// SetDiaryHandler registers the callback for the "get_diary" command.
+func (s *Server) SetDiaryHandler(fn DiaryFunc) {
+	s.diaryFn = fn
 }
 
 // Start begins listening in the background. It removes any stale socket file
@@ -110,17 +146,57 @@ func (s *Server) acceptLoop(ln net.Listener) {
 }
 
 func (s *Server) handleConn(conn net.Conn) {
-	defer conn.Close()
+	w := &connWriter{conn: conn}
+	s.mu.Lock()
+	s.conns[conn] = w
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.conns, conn)
+		delete(s.subs, w)
+		s.mu.Unlock()
+		conn.Close()
+	}()
 	scanner := bufio.NewScanner(conn)
 	for scanner.Scan() {
 		var req Request
 		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
-			resp := Response{Ok: false, Error: fmt.Sprintf("invalid request: %v", err)}
-			writeResponse(conn, resp)
+			w.write(Response{Ok: false, Error: fmt.Sprintf("invalid request: %v", err)})
 			continue
 		}
-		resp := s.dispatch(req)
-		writeResponse(conn, resp)
+		if req.Cmd == "subscribe" {
+			s.mu.Lock()
+			s.subs[w] = struct{}{}
+			s.mu.Unlock()
+			w.write(Response{Ok: true})
+			continue
+		}
+		w.write(s.dispatch(req))
+	}
+}
+
+// Broadcast pushes an event line to every subscribed connection. A dead
+// subscription is dropped on the spot; handleConn cleans the connection up
+// when its read loop notices the same error. The daemon's hot path only
+// pays a map snapshot here — the conn write locks are taken outside s.mu.
+func (s *Server) Broadcast(ev Event) {
+	data, err := json.Marshal(ev)
+	if err != nil {
+		return
+	}
+	data = append(data, '\n')
+	s.mu.Lock()
+	writers := make([]*connWriter, 0, len(s.subs))
+	for w := range s.subs {
+		writers = append(writers, w)
+	}
+	s.mu.Unlock()
+	for _, w := range writers {
+		if err := w.writeLine(data); err != nil {
+			s.mu.Lock()
+			delete(s.subs, w)
+			s.mu.Unlock()
+		}
 	}
 }
 
@@ -163,16 +239,16 @@ func (s *Server) dispatch(req Request) Response {
 			return Response{Ok: false, Error: err.Error()}
 		}
 		return Response{Ok: true}
+	case "get_diary":
+		if s.diaryFn == nil {
+			return Response{Ok: false, Error: "diary is not enabled"}
+		}
+		text, err := s.diaryFn()
+		if err != nil {
+			return Response{Ok: false, Error: err.Error()}
+		}
+		return Response{Ok: true, Diary: text}
 	default:
 		return Response{Ok: false, Error: fmt.Sprintf("unknown command: %q", req.Cmd)}
 	}
-}
-
-func writeResponse(w net.Conn, resp Response) {
-	data, err := json.Marshal(resp)
-	if err != nil {
-		return
-	}
-	data = append(data, '\n')
-	w.Write(data)
 }

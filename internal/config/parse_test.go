@@ -71,3 +71,54 @@ func TestParseAutoReplaceAndHotkeysRejectInvalid(t *testing.T) {
 		}
 	}
 }
+
+func TestParseSoundsAndDiary(t *testing.T) {
+	const cfg = `
+[Sounds]
+layout_switch = "/usr/share/sounds/sw.wav"
+retype = "/usr/share/sounds/rt.wav"
+
+[Diary]
+Enabled = true
+Path = "/var/log/xswitcher/diary.log"
+`
+	parsed, err := ParseTOML([]byte(cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.Sounds) != 2 || parsed.Sounds["layout_switch"] != "/usr/share/sounds/sw.wav" {
+		t.Errorf("Sounds wrong: %+v", parsed.Sounds)
+	}
+	if !parsed.Diary.Enabled || parsed.Diary.Path != "/var/log/xswitcher/diary.log" {
+		t.Errorf("Diary wrong: %+v", parsed.Diary)
+	}
+	if parsed.Diary.MaxSizeMB != 10 || parsed.Diary.RotateCount != 3 {
+		t.Errorf("Diary defaults missing: %+v", parsed.Diary)
+	}
+}
+
+func TestParseSoundsAndDiaryRejectInvalid(t *testing.T) {
+	cases := []struct {
+		name   string
+		body   string
+		wanted string
+	}{
+		{"unknown sound event", "[Sounds]\nclicking = \"/x.wav\"\n", `unknown event "clicking"`},
+		{"sound path not a string", "[Sounds]\nretype = 5\n", "must be a file path string"},
+		{"sound empty path", "[Sounds]\nretype = \"\"\n", "must not be empty"},
+		{"diary enabled without path", "[Diary]\nEnabled = true\n", "Path\" is required"},
+		{"diary relative path", "[Diary]\nEnabled = true\nPath = \"diary.log\"\n", "must be absolute"},
+		{"diary bad size", "[Diary]\nPath = \"/d\"\nMaxSizeMB = 0\n", "at least 1"},
+		{"diary negative rotation", "[Diary]\nPath = \"/d\"\nRotateCount = -1\n", "must not be negative"},
+	}
+	for _, tc := range cases {
+		_, err := ParseTOML([]byte(tc.body))
+		if err == nil {
+			t.Errorf("%s: accepted invalid config", tc.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.wanted) {
+			t.Errorf("%s: error %q does not mention %q", tc.name, err.Error(), tc.wanted)
+		}
+	}
+}

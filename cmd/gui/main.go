@@ -11,6 +11,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -18,6 +19,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"xswitcher/internal/ipc"
+	"xswitcher/internal/sounds"
 )
 
 func main() {
@@ -27,8 +29,23 @@ func main() {
 
 	client := ipc.NewClient(ipc.DefaultSocketPath)
 
-	editor, loadConfig := newEditorPanel(client)
+	router := newSoundRouter(sounds.New())
+	editor, loadConfig := newEditorPanel(client, router)
 	statusPanel, refreshStatus := newStatusPanel(client)
+
+	// Keep a live event subscription: every daemon respawn closes the old
+	// connection, and the loop re-subscribes two seconds later. Events only
+	// start a playback process, so the reader goroutine never touches the
+	// Fyne widgets and needs no fyne.Do marshalling.
+	go func() {
+		for {
+			done, err := client.Subscribe(router.handle)
+			if err == nil {
+				<-done
+			}
+			time.Sleep(2 * time.Second)
+		}
+	}()
 
 	tabs := container.NewAppTabs(
 		container.NewTabItem("Config", editor),

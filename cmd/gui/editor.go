@@ -38,13 +38,17 @@ type configPanel struct {
 	actionKeys    *actionKeysEditor
 	autoReplace   *autoReplaceEditor
 	hotkeys       *hotkeysEditor
+	sounds        *soundsEditor
+	diary         *diaryEditor
+	router        *soundRouter
 }
 
 // newEditorPanel creates the Config tab content. It also returns a load
 // function that fetches the live config from the daemon and populates the
-// widgets; main.go calls it when the Config tab is selected.
-func newEditorPanel(client *ipc.Client) (fyne.CanvasObject, func()) {
-	p := &configPanel{client: client}
+// widgets; main.go calls it when the Config tab is selected. The router
+// carries the live event→sound map to the IPC subscription callback.
+func newEditorPanel(client *ipc.Client, router *soundRouter) (fyne.CanvasObject, func()) {
+	p := &configPanel{client: client, router: router}
 
 	// ScanDevices section
 	p.testEntry = widget.NewEntry()
@@ -109,6 +113,10 @@ func newEditorPanel(client *ipc.Client) (fyne.CanvasObject, func()) {
 	p.autoReplace = ars
 	hkObj, hks := newHotkeysEditor()
 	p.hotkeys = hks
+	sndObj, snds := newSoundsEditor(router.player)
+	p.sounds = snds
+	diaryObj, dy := newDiaryEditor(client)
+	p.diary = dy
 
 	// Read-only view of the still-unbound sections (the [Actions] chain).
 	p.rawTOML = widget.NewMultiLineEntry()
@@ -129,6 +137,8 @@ func newEditorPanel(client *ipc.Client) (fyne.CanvasObject, func()) {
 		container.NewTabItem("WindowClasses", wcObj),
 		container.NewTabItem("AutoReplace", arObj),
 		container.NewTabItem("Hotkeys", hkObj),
+		container.NewTabItem("Sounds", sndObj),
+		container.NewTabItem("Diary", diaryObj),
 		container.NewTabItem("Actions", actObj),
 		container.NewTabItem("Other (raw)", container.NewVScroll(p.rawTOML)),
 	)
@@ -223,6 +233,8 @@ func (p *configPanel) load() {
 	p.windowClasses.load(data)
 	p.autoReplace.load(data)
 	p.hotkeys.load(data)
+	p.sounds.load(data, p.router)
+	p.diary.load(data)
 	p.actions.load(data)
 
 	p.rawTOML.SetText(renderRawSections(data))
@@ -269,6 +281,8 @@ func (p *configPanel) modsFromWidgets() map[string]any {
 		p.windowClasses.mods(),
 		p.autoReplace.mods(),
 		p.hotkeys.mods(),
+		p.sounds.mods(),
+		p.diary.mods(),
 		p.actions.mods(),
 	} {
 		for k, v := range sub {
@@ -328,7 +342,7 @@ func renderRawSections(data map[string]any) string {
 		switch key {
 		case "ScanDevices", "Keyboard", "Wayland",
 			"Action", "ActionKeys", "Templates", "WindowClasses",
-			"AutoReplace", "Hotkeys":
+			"AutoReplace", "Hotkeys", "Sounds", "Diary":
 			continue
 		}
 		filtered[key] = normalizeFloats(value)

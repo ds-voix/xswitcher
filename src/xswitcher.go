@@ -96,6 +96,7 @@ type TSequence = cfg.TSequence
 type TSequences = cfg.TSequences
 type TAutoReplace = cfg.TAutoReplace
 type THotkey = cfg.THotkey
+type TDiary = cfg.TDiary
 
 // Scan-codes
 type t_key struct {
@@ -140,6 +141,7 @@ var (
 	Wayland TWayland
 	AutoReplace []TAutoReplace
 	Hotkeys []THotkey
+	Diary TDiary
 
 	LANG = 0
 
@@ -311,11 +313,13 @@ func config() {
 	Wayland = parsed.Wayland
 	AutoReplace = parsed.AutoReplace
 	Hotkeys = parsed.Hotkeys
+	Diary = parsed.Diary
 
 	checkActionCycles()
 	collectManagedLayouts()
 	buildAutoReplace()
 	buildHotkeys()
+	initDiary()
 }
 
 // doAction() expands "Action.xxx" references recursively and has no depth limit, so a
@@ -816,6 +820,7 @@ func Language(lang int) (int) {
 					sendKeySequence(Wayland.Layout3)
 				}
 				time.Sleep(time.Duration(Wayland.Delay) * time.Millisecond)
+				sendSound("layout_switch")
 			}
 			LANG = lang
 		}
@@ -835,6 +840,7 @@ func Language(lang int) (int) {
 		if int(state.group) != lang {
 			CTRL["WORD"] = true
 		}
+		wanted := int(state.group) != lang // the switch intent, before the lock rewrites state
 		layout = C.uint(lang)
 		// XkbLockGroup returns a Status, and its meaning here is not established. Measured on the
 		// stand: locking group 0 answered 1 in runs where XkbGetState right after read group 0 back -
@@ -846,6 +852,9 @@ func Language(lang int) (int) {
 		}
 		if rc := int(C.XkbGetState(display, C.XkbUseCoreKbd, state)); rc != 0 && (*VERBOSE || *DEBUG) {
 			fmt.Printf("Language: XkbGetState(after) returned %d\n", rc)
+		}
+		if wanted && int(state.group) == lang { // the group really moved — feedback time
+			sendSound("layout_switch")
 		}
 	}
 
@@ -909,6 +918,7 @@ func sendKeySequence(keys []string) {
 func RetypeWord(A *TAction) {
 	if (len(WORD) - EXTRA) < 1 { // WTF?!
 		fmt.Printf("RetypeWord error: WORD(%v) is smaller than EXTRA(%v)!\n", len(WORD), EXTRA)
+		sendSound("error")
 		newWord()
 		return
 	}
@@ -1039,6 +1049,7 @@ func RetypeWord(A *TAction) {
 	}
 	WORD = WORD[ 0 : (len(WORD) - EXTRA)]
 	CTRL["WORD"] = true
+	sendSound("retype")
 	// Whatever the application holds now is the replayed text, produced in the layout that is active
 	// at this moment - so the snapshot follows the word instead of staying on the layout it came from.
 	wordLayout = Language(-1)
@@ -1445,6 +1456,9 @@ func doWindowActions() {
 	if testAction(&NewWord) {
 		if *VERBOSE || *DEBUG {
 			fmt.Printf("NewWord: %s\n", TAIL.String()[1:])
+		}
+		if EXTRA >= 0 && len(WORD)-EXTRA >= 1 { // the word the user just finished — diary time
+			recordDiary(bufferToText(WORD[:len(WORD)-EXTRA]))
 		}
 		tryAutoReplace()
 		newWord()
@@ -1881,27 +1895,31 @@ func main() {
 	sequences() // Compile expressions
 	keys() // Initialize key actions
 
-	connectEvents("") // Start keyloggers
-
-	// Seed the status snapshot so the first GUI query sees the attached devices
-	// even before the first key event runs the serve loop.
-	updateStatusSnapshot()
-
-	// Start IPC server for GUI communication (Phase 1 MVP).
+	// Start IPC server for GUI communication (Phase 1 MVP). The server
+	// object is built synchronously because the key-event goroutines below
+	// call sendSound through ipcSrv — assigning it before connectEvents
+	// removes the race without a mutex.
+	sockPath := ipc.DefaultSocketPath
+	if envSock, ok := os.LookupEnv("XSWITCHER_SOCK"); ok {
+		sockPath = envSock
+	}
+	srv := ipc.NewServer(sockPath, ipcStatus, ipcReload)
+	srv.SetConfigHandler(ipcGetConfig, ipcSetConfig, ipcValidate)
+	srv.SetDiaryHandler(ipcGetDiary)
+	ipcSrv = srv
 	go func() {
-		sockPath := ipc.DefaultSocketPath
-		if envSock, ok := os.LookupEnv("XSWITCHER_SOCK"); ok {
-			sockPath = envSock
-		}
-		srv := ipc.NewServer(sockPath, ipcStatus, ipcReload)
-		srv.SetConfigHandler(ipcGetConfig, ipcSetConfig, ipcValidate)
 		if err := srv.Start(); err != nil {
 			fmt.Printf("IPC server failed: %v\n", err)
 			return
 		}
 		// Server runs until process exit; no Stop() needed for daemon lifetime.
-		_ = srv
 	}()
+
+	connectEvents("") // Start keyloggers
+
+	// Seed the status snapshot so the first GUI query sees the attached devices
+	// even before the first key event runs the serve loop.
+	updateStatusSnapshot()
 
 	// Attach virtual keyboard
 	kb, err = keybd_event.NewKeyBonding()

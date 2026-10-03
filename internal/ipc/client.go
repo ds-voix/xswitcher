@@ -109,3 +109,60 @@ func (c *Client) Validate() error {
 	}
 	return nil
 }
+
+// GetDiary retrieves the diary content tail from the daemon. The daemon
+// owns the diary file (it may live in a root-only location), so the GUI
+// reads it exclusively through IPC.
+func (c *Client) GetDiary() (string, error) {
+	resp, err := c.Send(Request{Cmd: "get_diary"})
+	if err != nil {
+		return "", err
+	}
+	if !resp.Ok {
+		return "", fmt.Errorf("ipc: get_diary: %s", resp.Error)
+	}
+	return resp.Diary, nil
+}
+
+// Subscribe opens a dedicated connection, registers for daemon-pushed
+// events and forwards them to onEvent on a background goroutine. The
+// returned channel is closed when the connection dies (daemon respawn,
+// crash), so the caller can re-subscribe in a loop. The caller keeps
+// normal request/response traffic on Send.
+func (c *Client) Subscribe(onEvent func(Event)) (<-chan struct{}, error) {
+	done := make(chan struct{})
+	conn, err := net.Dial("unix", c.path)
+	if err != nil {
+		return nil, fmt.Errorf("ipc: dial %s: %w", c.path, err)
+	}
+	data, err := json.Marshal(Request{Cmd: "subscribe"})
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("ipc: marshal subscribe: %w", err)
+	}
+	if _, err := conn.Write(append(data, '\n')); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("ipc: subscribe write: %w", err)
+	}
+	scanner := bufio.NewScanner(conn)
+	if !scanner.Scan() {
+		conn.Close()
+		return nil, fmt.Errorf("ipc: subscribe: no acknowledgement")
+	}
+	var ack Response
+	if err := json.Unmarshal(scanner.Bytes(), &ack); err != nil || !ack.Ok {
+		conn.Close()
+		return nil, fmt.Errorf("ipc: subscribe rejected")
+	}
+	go func() {
+		defer close(done)
+		defer conn.Close()
+		for scanner.Scan() {
+			var ev Event
+			if json.Unmarshal(scanner.Bytes(), &ev) == nil && ev.Event != "" {
+				onEvent(ev)
+			}
+		}
+	}()
+	return done, nil
+}

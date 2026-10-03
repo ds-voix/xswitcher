@@ -24,6 +24,18 @@ type ParsedConfig struct {
 	Wayland       TWayland
 	AutoReplace   []TAutoReplace
 	Hotkeys       []THotkey
+	Sounds        TSounds
+	Diary         TDiary
+}
+
+// SoundEvents are the event kinds the daemon emits; [Sounds] may only bind
+// files for these, so a typo in an event name fails validation instead of
+// silently producing no sound.
+var SoundEvents = map[string]bool{
+	"layout_switch": true,
+	"retype":        true,
+	"auto_replace":  true,
+	"error":         true,
 }
 
 // HotkeyModifiers are the key names a [[Hotkeys]] combo may list as held
@@ -180,6 +192,47 @@ func ParseTOML(data []byte) (*ParsedConfig, error) {
 					return nil, fmt.Errorf("[[Hotkeys]] \"Action\" must name an [Action.*] section")
 				}
 				out.Hotkeys = append(out.Hotkeys, hk)
+			}
+
+		case "Sounds":
+			t, ok := value.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("[Sounds] must consist of \"event = file\" pairs")
+			}
+			out.Sounds = make(TSounds, len(t))
+			for k, v := range t {
+				s, ok := v.(string)
+				if !ok {
+					return nil, fmt.Errorf("[Sounds] value for \"%s\" must be a file path string", k)
+				}
+				if !SoundEvents[k] {
+					return nil, fmt.Errorf("[Sounds] unknown event \"%s\" (known: layout_switch, retype, auto_replace, error)", k)
+				}
+				if s == "" {
+					return nil, fmt.Errorf("[Sounds] \"%s\": the file path must not be empty", k)
+				}
+				out.Sounds[k] = s
+			}
+
+		case "Diary":
+			raw, err := toml.Marshal(value)
+			if err != nil {
+				return nil, fmt.Errorf("unable to parse [Diary]:\n%s", err.Error())
+			}
+			if err = toml.Unmarshal(raw, &out.Diary); err != nil {
+				return nil, fmt.Errorf("unable to parse [Diary]:\n%s", err.Error())
+			}
+			if out.Diary.Enabled && out.Diary.Path == "" {
+				return nil, fmt.Errorf("[Diary] \"Path\" is required when Enabled is set")
+			}
+			if out.Diary.Path != "" && !strings.HasPrefix(out.Diary.Path, "/") {
+				return nil, fmt.Errorf("[Diary] \"Path\" must be absolute: %q", out.Diary.Path)
+			}
+			if out.Diary.MaxSizeMB < 1 {
+				return nil, fmt.Errorf("[Diary] \"MaxSizeMB\" must be at least 1")
+			}
+			if out.Diary.RotateCount < 0 {
+				return nil, fmt.Errorf("[Diary] \"RotateCount\" must not be negative")
 			}
 
 		case "Actions":

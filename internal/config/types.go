@@ -84,6 +84,23 @@ type THotkey struct {
 	Action string
 }
 
+// TSounds maps a daemon event kind to the audio file the GUI should play.
+// The daemon only emits the events; playback lives in the GUI process so
+// that root never talks to the user's sound server.
+type TSounds map[string]string
+
+// TDiary configures the opt-in text diary: after each completed word the
+// daemon appends the resulting text (not raw keys) to Path, rotating the
+// file at MaxSizeMB and keeping RotateCount old copies. Disabled by
+// default — recording typed text is a keylogger capability and must be
+// enabled explicitly.
+type TDiary struct {
+	Enabled     bool
+	Path        string
+	MaxSizeMB   int `default:"10"`
+	RotateCount int `default:"3"`
+}
+
 // TWayland carries Wayland-specific bypass and layout keys.
 type TWayland struct {
 	BypassX bool `default:"false"`

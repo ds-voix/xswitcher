@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # Live IPC smoke against a running daemon (stand/smoke.sh brings the whole
-# environment up). Covers GUI-PLAN-PUNTO.md Phases 0-2 over the real unix
+# environment up). Covers GUI-PLAN-PUNTO.md Phases 0-4 over the real unix
 # socket: ping/status, get_config/set_config/validate, comment preservation,
-# rejection of an invalid mod, dotted paths into [Action.*] tables, and the
-# whole-array rewrite of [[WindowClasses]].
+# rejection of an invalid mod, dotted paths into [Action.*] tables, the
+# whole-array rewrite of [[WindowClasses]], the AutoReplace/Hotkeys arrays,
+# the [Sounds]/[Diary] gates and the subscribe push channel.
 import json
 import socket
 import sys
@@ -114,6 +115,57 @@ hk = r.get("data", {}).get("Hotkeys")
 check("p3 get_config shows rules", isinstance(ar, list) and len(ar) == 2
       and isinstance(hk, list) and len(hk) == 1, f"{ar} {hk}")
 check("p3 validate", req(s, {"cmd": "validate"})["ok"])
+
+# Phase 4: the [Sounds]/[Diary] parser gates reject before the file is
+# touched; the subscribe command turns a connection into a push channel
+# without breaking request/response on it; get_diary stays gated until the
+# daemon respawns with the new config (the live check after reload is in
+# stand/smoke.sh, because it needs real typed keys).
+DIARY = "/tmp/GuiSmoke.diary.txt"
+
+before4 = open(CFG).read()
+r = req(s, {"cmd": "set_config", "data": {"Diary.Enabled": True}})
+check("p4 diary without path rejected", not r["ok"], r.get("error", "")[:80])
+r = req(s, {"cmd": "set_config", "data": {"Sounds.bogus_event": "/tmp/x.wav"}})
+check("p4 unknown sound event rejected", not r["ok"], r.get("error", "")[:80])
+r = req(s, {"cmd": "set_config", "data": {"Sounds.retype": ""}})
+check("p4 empty sound path rejected", not r["ok"], r.get("error", "")[:80])
+check("p4 file untouched after rejects", open(CFG).read() == before4)
+
+r = req(s, {"cmd": "set_config", "data": {
+    "Sounds.layout_switch": "/tmp/switch.wav",
+    "Diary.Enabled": True,
+    "Diary.Path": DIARY,
+    "Diary.MaxSizeMB": 2.0,
+}})
+check("p4 sounds+diary set", r["ok"], str(r)[:120])
+body4 = open(CFG).read()
+check("p4 sounds written", 'layout_switch = "/tmp/switch.wav"' in body4)
+check("p4 diary written", "Enabled = true" in body4 and f'Path = "{DIARY}"' in body4
+      and "MaxSizeMB = 2" in body4)
+check("p4 comment still kept", "# precious comment" in body4)
+
+r = req(s, {"cmd": "get_config"})
+snd = r.get("data", {}).get("Sounds")
+dia = r.get("data", {}).get("Diary")
+check("p4 get_config shows sections",
+      isinstance(snd, dict) and snd.get("layout_switch") == "/tmp/switch.wav"
+      and isinstance(dia, dict) and dia.get("Enabled") is True, f"{snd} {dia}")
+
+# get_diary before the reload: the running daemon still has diary disabled in
+# memory, so the request must be refused rather than read the fresh file.
+r = req(s, {"cmd": "get_diary"})
+check("p4 get_diary gated until reload", not r["ok"]
+      and "not enabled" in r.get("error", ""), str(r)[:80])
+
+sub = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+sub.connect(SOCK)
+ack = req(sub, {"cmd": "subscribe"})
+check("p4 subscribe ack", ack.get("ok"), str(ack)[:80])
+check("p4 ping on subscribed conn", req(sub, {"cmd": "ping"}).get("ok"))
+sub.close()
+
+check("p4 validate", req(s, {"cmd": "validate"})["ok"])
 
 s.close()
 sys.exit(1 if failures else 0)
