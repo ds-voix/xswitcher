@@ -28,31 +28,44 @@ func main() {
 	client := ipc.NewClient(ipc.DefaultSocketPath)
 
 	editor, loadConfig := newEditorPanel(client)
+	statusPanel, refreshStatus := newStatusPanel(client)
 
 	tabs := container.NewAppTabs(
 		container.NewTabItem("Config", editor),
+		container.NewTabItem("Status", statusPanel),
 		container.NewTabItem("About", newAboutPanel()),
 	)
-	// Re-read the live config every time the Config tab is opened.
+	// Re-read the live daemon state every time a tab is opened.
 	tabs.OnSelected = func(item *container.TabItem) {
-		if item.Text == "Config" {
+		switch item.Text {
+		case "Config":
 			loadConfig()
+		case "Status":
+			refreshStatus()
 		}
 	}
 
 	statusBar := widget.NewLabel("Disconnected")
-	connectBtn := widget.NewButton("Connect", func() {
+	setStatus := func(text string) { statusBar.SetText(text) }
+
+	connect := func() {
 		if err := client.Ping(); err != nil {
 			statusBar.SetText(fmt.Sprintf("Error: %v", err))
-		} else {
-			statusBar.SetText("Connected to daemon")
-			loadConfig()
+			return
 		}
-	})
+		statusBar.SetText("Connected to daemon")
+		loadConfig()
+		refreshStatus()
+	}
+
+	connectBtn := widget.NewButton("Connect", connect)
+
+	setupTray(w, client, setStatus)
 
 	topBar := container.NewHBox(connectBtn, statusBar)
 	content := container.NewBorder(topBar, nil, nil, nil, tabs)
 
 	w.SetContent(content)
+	connect() // auto-connect on start (Punto parity Phase 1)
 	w.ShowAndRun()
 }

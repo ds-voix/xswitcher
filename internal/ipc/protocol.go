@@ -12,11 +12,14 @@ type Request struct {
 // Response is sent from the daemon to the GUI. Always includes Ok; on failure
 // Error carries a human-readable message.
 type Response struct {
-	Ok      bool           `json:"ok"`
-	Error   string         `json:"error,omitempty"`
-	PID     int            `json:"pid,omitempty"`
-	Uptime  string         `json:"uptime,omitempty"`
-	Config  string         `json:"config,omitempty"`
-	Devices []string       `json:"devices,omitempty"`
-	Data    map[string]any `json:"data,omitempty"` // raw TOML content or parsed config for get_config
+	Ok           bool           `json:"ok"`
+	Error        string         `json:"error,omitempty"`
+	PID          int            `json:"pid,omitempty"`
+	Uptime       string         `json:"uptime,omitempty"`
+	Config       string         `json:"config,omitempty"`
+	Devices      []string       `json:"devices,omitempty"`
+	Layout       int            `json:"layout"` // current XKB group; 0 is a meaningful value
+	WordBuffer   string         `json:"word_buffer,omitempty"`
+	ActiveWindow string         `json:"active_window,omitempty"`
+	Data         map[string]any `json:"data,omitempty"` // raw TOML content or parsed config for get_config
 }

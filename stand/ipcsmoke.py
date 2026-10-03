@@ -37,6 +37,9 @@ s.connect(SOCK)
 check("ping", req(s, {"cmd": "ping"})["ok"])
 st = req(s, {"cmd": "status"})
 check("status", st["ok"] and st["pid"] > 0 and st["config"] == CFG, str(st))
+# Phase 1: the live-status fields must always be present in the protocol.
+check("status layout field", "layout" in st, str(st))
+check("status devices list", isinstance(st.get("devices"), list) and len(st["devices"]) > 0, str(st.get("devices")))
 
 r = req(s, {"cmd": "get_config"})
 check("get_config", r["ok"] and "ScanDevices" in r["data"], str(sorted(r.get("data", {}))))
