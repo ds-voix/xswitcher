@@ -1689,6 +1689,14 @@ func Respawn(*TAction) { // Completelly respawn xswitcher.
 		fmt.Printf("Respawn skipped: %v.\n", err)
 		return
 	}
+	// A forked process is not a running one. Everything the parser cannot see -- the
+	// expressions sequences() compiles, the keys keys() resolves, the device serve() stats
+	// -- kills the child afterwards, and this process IS the keyboard: it may only let go
+	// once the child has taken the socket. See handover.go.
+	if err := handover(p); err != nil {
+		fmt.Printf("Respawn skipped: %v.\n", err)
+		return
+	}
 	fmt.Printf("Forked child %v.\n", p.Pid)
 	os.Exit(0)
 }
@@ -1779,6 +1787,13 @@ func ipcReload() ipc.Response {
 	if err != nil {
 		return ipc.Response{Ok: false, Error: fmt.Sprintf("reload refused, config kept as is: %v", err)}
 	}
+	// forkChild() only created a process. Until it owns the socket it has not passed the
+	// states the parser cannot see, and answering Ok before that is the lie that costs the
+	// user their keyboard: this process exits, the child never comes up, and the GUI is
+	// left reporting a reload that never happened.
+	if err := handover(p); err != nil {
+		return ipc.Response{Ok: false, Error: fmt.Sprintf("reload refused, config kept as is: %v", err)}
+	}
 	// Give the IPC response a chance to reach the GUI before this process exits.
 	go func() {
 		time.Sleep(200 * time.Millisecond)
@@ -1821,8 +1836,10 @@ func ipcSetConfig(mods map[string]any) error {
 // What this gate cannot see is everything the parser leaves for the daemon: sequences()
 // and keys() panic AFTER it returned -- an invalid WordChars/WordHead/OFF/ON/SEQ regex, a
 // duplicated OFF/ON/SEQ declaration, an unresolvable key name -- and serve() panics on a
-// [ScanDevices] Test path that is not there. main() recovers from every one of them and
-// returns, so the child exits successfully with its parent already gone.
+// [ScanDevices] Test path that is not there. Those are not the parent's to predict, they
+// are the child's to survive, and handover() is what finds out: each of them kills the
+// child before it binds the GUI socket, so the parent sees the death, keeps the keyboard
+// it already has, and reports the refusal instead of leaving the user without one.
 func configKillsChild() error {
 	data, err := os.ReadFile(CONFIG_PATH)
 	if err != nil {
@@ -1891,6 +1908,12 @@ func serve() {
 	C.set_handle_error()
 	x_class = C.XAllocClassHint()
 
+	// Everything that can stop this process is behind us: the config, the compiled
+	// expressions, the keys, the device scan, the virtual keyboard, inotify and the X11
+	// connection. Binding the GUI socket now, and not before, is what makes owning it a
+	// boot proof for the parent that respawned us -- see listenIPC() in handover.go.
+	listenIPC()
+
 	for {
 		select {
 		case event = <- miceEvents: // code is always 0x4, while value is 0x90000 + button(1,2,3...)
@@ -1935,22 +1958,16 @@ func main() {
 	sequences() // Compile expressions
 	keys() // Initialize key actions
 
-	// Start IPC server for GUI communication (Phase 1 MVP). The server
-	// object is built synchronously because the key-event goroutines below
-	// call sendSound through ipcSrv — assigning it before connectEvents
-	// removes the race without a mutex.
+	// The IPC server for the GUI is built here but bound at the end of serve(), the last
+	// step that can still fail on the config: owning the socket then means having booted,
+	// and handover() is what waits for that. Building it early stays required because the
+	// key-event goroutines below call sendSound through ipcSrv -- assigning it before
+	// connectEvents removes the race without a mutex.
 	sockPath := ipc.SocketPath()
 	srv := ipc.NewServer(sockPath, ipcStatus, ipcReload)
 	srv.SetConfigHandler(ipcGetConfig, ipcSetConfig, validateConfig)
 	srv.SetDiaryHandler(ipcGetDiary)
 	ipcSrv = srv
-	go func() {
-		if err := srv.Start(); err != nil {
-			fmt.Printf("IPC server failed: %v\n", err)
-			return
-		}
-		// Server runs until process exit; no Stop() needed for daemon lifetime.
-	}()
 
 	connectEvents("") // Start keyloggers
 

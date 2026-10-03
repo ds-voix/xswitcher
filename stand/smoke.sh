@@ -467,6 +467,79 @@ respawn; RC=$?
 check "p6 $RESPAWN_STAGE with the cycle taken back out" "$RC"
 [ "$RC" = "0" ] || { say "FATAL: daemon gone after the cycle restore" ""; tail -20 "$LOG"; exit 9; }
 
+# The third fatal state is neither of the parser's: a file that IS valid TOML and that the
+# daemon still cannot boot through, because the regex it compiles AFTER parsing is broken.
+# Nothing here can be refused up front -- which is exactly why the handover waits for the
+# child to own the socket instead of trusting that a fork means a running daemon.
+PID_WORD=$(status_value pid)
+case "$PID_WORD" in
+    ''|*[!0-9]*) say "FATAL: p6 read no pid before the expression test: '$PID_WORD'" ""; exit 9 ;;
+esac
+cp "$CONF" /tmp/smoke-word-backup.conf
+python3 - "$CONF" <<'PY'
+import re, sys
+path = sys.argv[1]
+text = open(path, encoding='utf-8').read()
+# Replace the declaration the config already carries instead of appending a second one:
+# TOML refuses a duplicate key, and a parser refusal here would prove nothing about the
+# child. "([U" is valid TOML and nothing a regex compiler will take.
+out, n = re.subn(r'(?m)^([ \t]*WordChars[ \t]*=[ \t]*")[^"]*"', r'\1([U"', text, count=1)
+if n != 1:
+    sys.exit('no WordChars declaration found to break')
+open(path, 'w', encoding='utf-8', newline='').write(out)
+PY
+REPLY=$(reload_reply)
+case "$REPLY" in refused:*) true ;; *) false ;; esac
+check "p6 reload refused a config only the child could fail on" "$?"
+# The wording is the discriminator: a parser refusal names the syntax, this one can only
+# come from watching the child die, so it proves the handover and not the gate answered.
+echo "$REPLY" | grep -q "exited instead of coming up"
+check "p6 the refusal says the child died, not that the file is broken" "$?"
+sleep 1   # past the window a respawning parent uses to exit
+ping_alive
+check "p6 the daemon still serves after the child died" "$?"
+[ "$(status_value pid)" = "$PID_WORD" ]
+check "p6 a dead child left the keyboard with the process that was serving" "$?"
+cp /tmp/smoke-word-backup.conf "$CONF"
+respawn; RC=$?
+check "p6 $RESPAWN_STAGE with the broken expression taken back out" "$RC"
+[ "$RC" = "0" ] || { say "FATAL: daemon gone after the expression restore" ""; tail -20 "$LOG"; exit 9; }
+
+# The last fatal state is one the watch only catches because of WHERE the child binds the
+# socket. serve() stats the [ScanDevices] Test device, and a name that is not there is valid
+# TOML the parser has no opinion about; with the bind earlier in the boot the child would
+# have taken the socket off the parent on its way to dying, and the parent would go on
+# serving on a name nothing can reach. So these checks answer for listenIPC()'s position.
+PID_DEVICE=$(status_value pid)
+case "$PID_DEVICE" in
+    ''|*[!0-9]*) say "FATAL: p6 read no pid before the device test: '$PID_DEVICE'" ""; exit 9 ;;
+esac
+cp "$CONF" /tmp/smoke-device-backup.conf
+python3 - "$CONF" <<'PY'
+import re, sys
+path = sys.argv[1]
+text = open(path, encoding='utf-8').read()
+head = text.index('[ScanDevices]')
+tail = text.index('\n[', head + 1)  # the next header: only this section gets edited
+out, n = re.subn(r'(?m)^([ \t]*Test[ \t]*=[ \t]*")[^"]*"',
+                 r'\1/dev/input/xx-smoke-absent"', text[head:tail], count=1)
+if n != 1:
+    sys.exit('no Test declaration inside [ScanDevices] to point at nothing')
+open(path, 'w', encoding='utf-8', newline='').write(text[:head] + out + text[tail:])
+PY
+REPLY=$(reload_reply)
+case "$REPLY" in refused:*) true ;; *) false ;; esac
+check "p6 reload refused a Test device that is not there" "$?"
+sleep 1   # past the window a respawning parent uses to exit
+ping_alive
+check "p6 the daemon still serves after a child died on the device" "$?"
+[ "$(status_value pid)" = "$PID_DEVICE" ]
+check "p6 a child that died left the socket reachable on the old process" "$?"
+cp /tmp/smoke-device-backup.conf "$CONF"
+respawn; RC=$?
+check "p6 $RESPAWN_STAGE with the Test device back" "$RC"
+[ "$RC" = "0" ] || { say "FATAL: daemon gone after the device restore" ""; tail -20 "$LOG"; exit 9; }
+
 PID_RESTORED=$(status_value pid)
 case "$PID_RESTORED" in ''|*[!0-9]*) say "FATAL: p6 read no pid after the restore" ""; exit 9 ;; esac
 rm -f "$CONF"
@@ -475,7 +548,10 @@ REPLY=$(reload_reply)
 check "p6 a vanished config still respawns" "$?"
 sleep 1
 PID_VANISHED=$(status_value pid)
-[ -n "$PID_VANISHED" ] && [ "$PID_VANISHED" != "$PID_RESTORED" ]
+case "$PID_VANISHED" in
+    ''|*[!0-9]*) say "FATAL: p6 read no pid after the vanished config: '$PID_VANISHED'" ""; exit 9 ;;
+esac
+[ "$PID_VANISHED" != "$PID_RESTORED" ]
 check "p6 the vanished config handed over to a new pid ($PID_VANISHED)" "$?"
 echo "$PID_VANISHED" > /tmp/smoke-child.pid
 cp /tmp/smoke-reload-backup.conf "$CONF"
