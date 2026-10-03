@@ -744,9 +744,11 @@ func collectManagedLayouts() {
 	for _, l := range ActionKeys.Layouts {
 		managedLayouts[l] = true
 	}
-	// Only a section that names the leaf itself may contribute: an unset Layout parses to Go's
-	// zero 0, not to the -1 the struct tag advertises, because nothing reads those tags -- so
-	// trusting every section's Layout would hand group 0 to xswitcher in every config.
+	// Only a section that names the leaf itself may contribute. The `default:"-1"` tag does work --
+	// measured: a [Action.X] section without a Layout parses as -1, because go-toml v1.9.5 applies
+	// that tag itself (marshal.go, tagDefault) -- and the guard below skips it. The guard is still
+	// what the code relies on, because a TAction built without the parser (a test, a future caller)
+	// leaves the field at Go's zero 0 and would hand group 0 to xswitcher.
 	for _, a := range ActionSet {
 		for _, act := range a.Action {
 			switch act {

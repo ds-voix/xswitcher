@@ -4,9 +4,9 @@ import "testing"
 
 // The gate that discards keys of an "extra language" has to know the groups the configuration can
 // switch into, not only the global [ActionKeys] Layouts. It may only trust the layout fields of a
-// section that names the leaf reading them: nothing in the parser applies the `default:"-1"` tag
-// (no reflect anywhere in src/), so an unset Layout is Go's zero 0 and would otherwise hand group
-// 0 to xswitcher in every config.
+// section that names the leaf reading them. Through the parser an unset Layout is -1 (go-toml v1.9.5
+// applies the `default:"-1"` tag itself); this test builds the structs directly, so the field is
+// Go's zero 0 here -- which is exactly what the `a.Layout >= 0` guard has to discard.
 func TestCollectManagedLayouts(t *testing.T) {
 	oldKeys, oldSet, oldManaged := ActionKeys, ActionSet, managedLayouts
 	defer func() { ActionKeys, ActionSet, managedLayouts = oldKeys, oldSet, oldManaged }()
