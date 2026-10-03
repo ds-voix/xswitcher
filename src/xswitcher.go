@@ -544,20 +544,20 @@ func parseKeys(keys []string, action func(t_key), name string) {
 
 func keys() {
 	for name, code := range key_def { // Invert key_def[] to key_name[]
+		// The aliases below join key_def at the end of every call. An
+		// inversion that read them back would give a second call two names
+		// per code ("," and "COMMA") and let the map order pick which one
+		// lands in key_name - the templates document that key_name must
+		// carry the "canonic" spelling only. Skipping them keeps keys()
+		// idempotent and the first call's result identical to before.
+		if _, aliased := keyAliases[name]; aliased {
+			continue
+		}
 		key_name[code] = name
 	}
-	// Extra key aliases
-	key_def["MINUS"] = 12
-	key_def["EQUAL"] = 13
-	key_def["["] = 26
-	key_def["]"] = 27
-	key_def[";"] = 39
-	key_def["'"] = 40
-	key_def["`"] = 41
-	key_def["\\"] = 43
-	key_def[","] = 51
-	key_def["."] = 52
-	key_def["/"] = 53
+	for name, code := range keyAliases { // Extra key aliases
+		key_def[name] = code
+	}
 
 	for i, _ := range KEYS { // All defaults to testKey()
 		KEYS[i] = testKey
