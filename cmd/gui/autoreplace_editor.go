@@ -42,19 +42,23 @@ func (e *autoReplaceEditor) addRow(trigger, replace string, exact bool) {
 	e.rows = append(e.rows, row)
 
 	var card *widget.Card // declared first: the remove closure below references it
-	card = widget.NewCard("", "", container.NewHBox(
+	remove := widget.NewButton("remove", func() {
+		for i, r := range e.rows {
+			if r == row {
+				e.rows = append(e.rows[:i], e.rows[i+1:]...)
+				break
+			}
+		}
+		e.list.Remove(card)
+	})
+	lay := newFieldLayout(0.20)
+	lay.markFlex(row.trigger)
+	lay.markFlex(row.replace)
+	card = widget.NewCard("", "", container.New(lay,
 		widget.NewLabel("Trigger"), row.trigger,
 		widget.NewLabel("Replace"), row.replace,
 		row.exact,
-		widget.NewButton("remove", func() {
-			for i, r := range e.rows {
-				if r == row {
-					e.rows = append(e.rows[:i], e.rows[i+1:]...)
-					break
-				}
-			}
-			e.list.Remove(card)
-		}),
+		remove,
 	))
 	e.list.Add(card)
 }
