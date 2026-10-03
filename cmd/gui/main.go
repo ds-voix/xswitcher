@@ -27,7 +27,7 @@ func main() {
 	w := a.NewWindow("xswitcher")
 	w.Resize(fyne.NewSize(600, 500))
 
-	client := ipc.NewClient(ipc.DefaultSocketPath)
+	client := ipc.NewClient(ipc.SocketPath())
 
 	router := newSoundRouter(sounds.New())
 	editor, loadConfig := newEditorPanel(client, router)

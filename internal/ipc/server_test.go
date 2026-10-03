@@ -1,9 +1,35 @@
 package ipc
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
+
+// TestSocketPathFollowsTheEnvBothHalvesRead pins the one rule that lets the GUI
+// reach the daemon at all: both ask SocketPath(), so whatever the listener bound
+// is what the dialer dials. The stand starts its daemon on a /tmp socket, and a
+// GUI that ignored XSWITCHER_SOCK sat on the default path and reported a
+// connection error while the daemon answered ping happily on its own.
+func TestSocketPathFollowsTheEnvBothHalvesRead(t *testing.T) {
+	// t.Setenv only registers the restore; the case under test is the variable
+	// being absent, which is how an installed daemon and GUI run.
+	t.Setenv("XSWITCHER_SOCK", "")
+	if err := os.Unsetenv("XSWITCHER_SOCK"); err != nil {
+		t.Fatalf("unset: %v", err)
+	}
+	if got := SocketPath(); got != DefaultSocketPath {
+		t.Errorf("without XSWITCHER_SOCK: got %q, want %q", got, DefaultSocketPath)
+	}
+	// An empty value is passed through, not replaced: the daemon then fails to
+	// bind and says so, which beats listening somewhere nobody asked for.
+	for _, want := range []string{"/tmp/gui.sock", ""} {
+		t.Setenv("XSWITCHER_SOCK", want)
+		if got := SocketPath(); got != want {
+			t.Errorf("XSWITCHER_SOCK=%q: got %q", want, got)
+		}
+	}
+}
 
 // End-to-end over a real unix socket: the client methods added in Phase 0
 // must round-trip through the server dispatch and the registered handlers.

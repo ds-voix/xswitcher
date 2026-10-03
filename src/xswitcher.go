@@ -1933,10 +1933,7 @@ func main() {
 	// object is built synchronously because the key-event goroutines below
 	// call sendSound through ipcSrv — assigning it before connectEvents
 	// removes the race without a mutex.
-	sockPath := ipc.DefaultSocketPath
-	if envSock, ok := os.LookupEnv("XSWITCHER_SOCK"); ok {
-		sockPath = envSock
-	}
+	sockPath := ipc.SocketPath()
 	srv := ipc.NewServer(sockPath, ipcStatus, ipcReload)
 	srv.SetConfigHandler(ipcGetConfig, ipcSetConfig, ipcValidate)
 	srv.SetDiaryHandler(ipcGetDiary)

@@ -29,10 +29,7 @@ func main() {
 	// This file exists as a placeholder for the future thin-wrapper architecture.
 	// The actual IPC integration happens in src/xswitcher.go for now.
 
-	sockPath := ipc.DefaultSocketPath
-	if envSock, ok := os.LookupEnv("XSWITCHER_SOCK"); ok {
-		sockPath = envSock
-	}
+	sockPath := ipc.SocketPath()
 
 	srv := ipc.NewServer(sockPath, nil, nil)
 	if err := srv.Start(); err != nil {

@@ -17,6 +17,21 @@ const (
 	socketPerm        = 0660
 )
 
+// SocketPath is the socket the two halves meet on: XSWITCHER_SOCK when the
+// environment names one, DefaultSocketPath otherwise. The daemon listens here
+// and the GUI connects here, so agreeing is a matter of reading it the same
+// way in one place — a GUI that hard-coded the default could not reach a daemon
+// started anywhere else, which is exactly how the stand runs its daemon (under
+// /tmp). An empty XSWITCHER_SOCK stays empty on both sides: the daemon then
+// fails to bind and says so in its log, which is a truer report than silently
+// listening somewhere the operator did not ask for.
+func SocketPath() string {
+	if s, ok := os.LookupEnv("XSWITCHER_SOCK"); ok {
+		return s
+	}
+	return DefaultSocketPath
+}
+
 // StatusFunc returns current daemon status for the "status" command.
 type StatusFunc func() Response
 
