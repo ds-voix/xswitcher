@@ -9,6 +9,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -55,8 +56,38 @@ func ReadTOMLTree(path string) (*toml.Tree, error) {
 	return tree, nil
 }
 
+// writeFile replaces the config in one step. os.WriteFile truncates the file in place,
+// so a reader that opens it mid-write -- a respawned child re-reading CONFIG_PATH a
+// moment after the GUI saved -- can be handed a prefix of the new content, which is a
+// file nothing parses. The bytes go to a temporary file in the same directory and are
+// renamed over the target, and a rename within one filesystem gives every reader either
+// the whole old content or the whole new one. The target is resolved through symlinks
+// first: a rename replaces the NAME it was given, so a config that is a symlink into a
+// dotfile directory would otherwise stop being one and leave the real file behind.
 func writeFile(path string, out []byte) error {
-	if err := os.WriteFile(path, out, 0644); err != nil {
+	if target, err := filepath.EvalSymlinks(path); err == nil {
+		path = target
+	}
+	dir, base := filepath.Dir(path), filepath.Base(path)
+	tmp, err := os.CreateTemp(dir, base+".tmp*")
+	if err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // a no-op once the rename below has consumed it
+	if _, err = tmp.Write(out); err == nil {
+		err = tmp.Chmod(0644)
+	}
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	if err = os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 	return nil

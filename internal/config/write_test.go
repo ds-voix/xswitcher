@@ -1,6 +1,7 @@
 package config
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -238,5 +239,124 @@ func TestWriteTOMLRejectsBareSectionPath(t *testing.T) {
 	err := WriteTOMLChecked(path, map[string]interface{}{"Keyboard": []interface{}{"a", "b"}})
 	if err == nil || !strings.Contains(err.Error(), "unsupported key path") {
 		t.Errorf("want unsupported-path error, got: %v", err)
+	}
+}
+
+// The mechanism the GUI relies on when it saves and immediately reloads: a reader that
+// already has the file open must not be dragged through a half-written config. os.WriteFile
+// truncates in place, so an open descriptor follows the write and reads a prefix of the new
+// content -- a file nothing parses. A rename over the name leaves that reader on the
+// complete old bytes, which is what this pins.
+func TestWriteFileKeepsAnOpenReaderOnTheOldBytes(t *testing.T) {
+	const orig = "# precious\n[Keyboard]\nDelay = 5\n"
+	path := writeConf(t, orig)
+
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	const updated = "[Keyboard]\nDelay = 50\n"
+	if err := writeFile(path, []byte(updated)); err != nil {
+		t.Fatalf("writeFile: %v", err)
+	}
+
+	got, err := io.ReadAll(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != orig {
+		t.Errorf("the reader that opened before the write got %q, want the whole old content %q", got, orig)
+	}
+	// The name itself carries the new content, complete.
+	now, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(now) != updated {
+		t.Errorf("the file holds %q, want %q", now, updated)
+	}
+}
+
+// A rename replaces the NAME it was given, so a config that is a symlink -- the usual shape
+// for a file kept in a dotfile directory -- has to be resolved before the temporary file is
+// renamed, or the write silently detaches it and the user's real file stops being the one
+// the daemon reads.
+func TestWriteFileKeepsASymlinkedConfigLinked(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "stored.conf")
+	if err := os.WriteFile(real, []byte("[Keyboard]\nDelay = 5\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "xswitcher.conf")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable here: %v", err)
+	}
+
+	if err := writeFile(link, []byte("[Keyboard]\nDelay = 60\n")); err != nil {
+		t.Fatalf("writeFile: %v", err)
+	}
+
+	info, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("%s stopped being a symlink after the write (mode %v)", link, info.Mode())
+	}
+	stored, err := os.ReadFile(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(stored) != "[Keyboard]\nDelay = 60\n" {
+		t.Errorf("the file the symlink points at holds %q, want the new content", stored)
+	}
+}
+
+// The temporary file must not survive the write: left behind next to the config it would be
+// a second file that the daemon's readers and the user's editor both have to explain.
+func TestWriteFileLeavesNoTemporaryBehind(t *testing.T) {
+	path := writeConf(t, "[Keyboard]\nDelay = 5\n")
+	if err := writeFile(path, []byte("[Keyboard]\nDelay = 7\n")); err != nil {
+		t.Fatalf("writeFile: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("%d files left in the config directory: %v, want only xswitcher.conf", len(entries), names)
+	}
+}
+
+// The temporary must not survive a FAILED write either -- that is what the defer after
+// CreateTemp is for, and the success path cannot show it because the rename consumes the
+// file. A directory standing where the config belongs makes every step up to the rename
+// succeed and the rename itself fail.
+func TestWriteFileRemovesTheTemporaryWhenTheRenameFails(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "xswitcher.conf")
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeFile(path, []byte("[Keyboard]\nDelay = 5\n")); err == nil {
+		t.Fatal("renaming a regular file over a directory must fail")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "xswitcher.conf" {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("%v left in the config directory after the failed write, want only the xswitcher.conf entry", names)
 	}
 }
