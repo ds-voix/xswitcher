@@ -72,8 +72,10 @@ func newAutodetectEditor(client *ipc.Client) (fyne.CanvasObject, *autodetectEdit
 	e.preview.Disable()
 	e.previewBtn = widget.NewButton("Preview current buffer", e.previewNow)
 	previewHint := widget.NewLabel("The daemon judges a word when it is completed; the preview judges the " +
-		"whole buffer as it stands. The layout it compares against is the one the status reports now, " +
-		"while the daemon uses the group the last word character was typed in.")
+		"whole buffer as it stands, so a buffer that already holds the first keys of the next word is " +
+		"scored one word longer here. The daemon also refuses a word while a compose sequence is in " +
+		"progress and skips the one word right after a layout you switched by hand; neither state is in " +
+		"the status, so the preview cannot show those refusals.")
 	previewHint.Wrapping = fyne.TextWrapWord
 
 	return container.NewVScroll(container.NewVBox(
@@ -172,7 +174,7 @@ func languageGroups(text string) map[string]int {
 type previewInput struct {
 	Buffer    string            // the US rendering of the buffer, as the status reports it
 	Readings  map[string]string // the same keys spelled in each declared language
-	Layout    int               // the group the daemon is on now
+	WordGroup int               // the group the word was typed in, as the daemon reports it; -1 for none
 	MinChars  int
 	Threshold float64
 	Groups    map[string]int
@@ -180,17 +182,23 @@ type previewInput struct {
 
 // previewReport lists the readings, the model's verdict over them and which guard
 // the case falls to. It is a plain function of plain values because it mirrors
-// src/autodetect.go's decision -- same letter count, same order of the two brakes,
-// same comparison against the group -- and that order is the part worth pinning
-// down without an X server, a daemon or a widget in sight.
+// src/autodetect.go's decision -- the same brakes, in the same order, each one
+// answering about the same quantity the daemon reads -- and that order is the part
+// worth pinning down without an X server, a daemon or a widget in sight.
+//
+// Two differences are structural and stay in the hint the user reads: the daemon
+// judges a completed word while the preview judges the whole live buffer, and the
+// daemon's transient gates (a compose sequence in progress, the one-word grace
+// after a hand-driven switch) are not states the status publishes.
 func previewReport(in previewInput) string {
 	if len(in.Readings) < 2 {
 		return fmt.Sprintf("Buffer: %q\n\nThe daemon sent no readings: [AutoDetect] is switched off in the "+
 			"running config or names one language. Enable it, Apply, then preview again.", in.Buffer)
 	}
 
-	// The letter count is the daemon's own measure: it counts letters in the US
-	// rendering of the buffer, which is the text the status reports.
+	// Letters are counted over the buffer the daemon renders, which is the same
+	// physical presses the daemon measures; the daemon measures them on the
+	// finished word rather than on the tail still being typed.
 	letters := 0
 	for _, r := range in.Buffer {
 		if unicode.IsLetter(r) {
@@ -209,6 +217,22 @@ func previewReport(in previewInput) string {
 		fmt.Fprintf(&b, "  %-4s %s\n", code, in.Readings[code])
 	}
 
+	// First of the daemon's own refusals: a word typed in a group the Languages
+	// list does not name has no declared script to be read in, so nothing is ever
+	// scored, whatever the readings look like.
+	if !namesGroup(in.Groups, in.WordGroup) {
+		fmt.Fprintf(&b, "Would NOT be corrected: the word was typed in group %d, which Languages does not name.\n",
+			in.WordGroup)
+		return b.String()
+	}
+
+	// Length is the brake the daemon applies before it asks the model anything, so
+	// a run too short to judge never reports a winner here either.
+	if letters < in.MinChars {
+		fmt.Fprintf(&b, "Would NOT be corrected: %d letters is below MinChars %d.\n", letters, in.MinChars)
+		return b.String()
+	}
+
 	lang, confidence, ok := autodetect.Best(in.Readings)
 	if !ok {
 		b.WriteString("No verdict: this run fits neither reading, so the daemon leaves it alone.\n")
@@ -216,23 +240,34 @@ func previewReport(in previewInput) string {
 	}
 	fmt.Fprintf(&b, "Best reading: %s at confidence %.3f (threshold %.3f, MinChars %d)\n",
 		lang, confidence, in.Threshold, in.MinChars)
-	switch {
-	case letters < in.MinChars:
-		fmt.Fprintf(&b, "Would NOT be corrected: %d letters is below MinChars %d.\n", letters, in.MinChars)
-	case confidence < in.Threshold:
+	if confidence < in.Threshold {
 		fmt.Fprintf(&b, "Would NOT be corrected: %.3f is below Confidence %.3f.\n", confidence, in.Threshold)
+		return b.String()
+	}
+	group, named := in.Groups[lang]
+	switch {
+	case !named:
+		fmt.Fprintf(&b, "The form names no group for %s: add it to Languages before applying.\n", lang)
+	case group == in.WordGroup:
+		fmt.Fprintf(&b, "Nothing to do: the winning group %d is already the group the word was typed in.\n", group)
 	default:
-		group, named := in.Groups[lang]
-		switch {
-		case !named:
-			fmt.Fprintf(&b, "The form names no group for %s: add it to Languages before applying.\n", lang)
-		case group == in.Layout:
-			fmt.Fprintf(&b, "Nothing to do: the winning group %d is already the current layout.\n", group)
-		default:
-			fmt.Fprintf(&b, "WOULD be corrected to %s: group %d instead of %d.\n", lang, group, in.Layout)
-		}
+		fmt.Fprintf(&b, "WOULD be corrected to %s: group %d instead of %d.\n", lang, group, in.WordGroup)
 	}
 	return b.String()
+}
+
+// namesGroup reports whether a Languages list names the given XKB group at all.
+// A negative group is the daemon's "no character recorded yet" and is named by nobody.
+func namesGroup(groups map[string]int, want int) bool {
+	if want < 0 {
+		return false
+	}
+	for _, group := range groups {
+		if group == want {
+			return true
+		}
+	}
+	return false
 }
 
 // previewNow asks the daemon for the live buffer and says what the detector would
@@ -249,7 +284,7 @@ func (e *autodetectEditor) previewNow() {
 	e.show(previewReport(previewInput{
 		Buffer:    resp.WordBuffer,
 		Readings:  resp.Readings,
-		Layout:    resp.Layout,
+		WordGroup: resp.WordGroup,
 		MinChars:  minChars,
 		Threshold: threshold,
 		Groups:    languageGroups(e.languages.Text),

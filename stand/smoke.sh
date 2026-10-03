@@ -285,6 +285,14 @@ check "p5 $RESPAWN_STAGE" "$RC"
 [ "$RC" = "0" ] || { say "FATAL: daemon gone after the p5 reload" ""; tail -20 "$LOG"; exit 9; }
 sleep 1   # let the respawned daemon attach the source device before typing
 
+# Nothing has been typed since the respawn, so the group the word was typed in is
+# still the daemon's own "not recorded yet", which is -1 and not group 0. The
+# number has to survive the wire: the GUI's preview refuses a word whose group the
+# Languages list does not name, and a field that vanished on the way would read
+# back as a real layout.
+[ "$(status_value word_group)" = "-1" ]
+check "p5 status carries the unrecorded word group as -1" "$?"
+
 # The six keys of the russian word привет carry "ghbdtn" while the machine is on
 # the latin group. The shipped models read that run as Russian at 0.379, above the
 # 0.2 threshold, and the spare letter at the end is what completes the word

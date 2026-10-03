@@ -1737,6 +1737,10 @@ type statusCore struct {
 	Lang   int
 	Word   string
 	Window string
+	// WordGroup is the group the last word character was typed in (-1 before the
+	// first one). [AutoDetect] keys its decision on this, not on Lang, so the GUI
+	// preview needs it to answer about the same quantity the daemon judges.
+	WordGroup int
 	// Readings is the same buffer spelled in each [AutoDetect] language, so the
 	// GUI can preview a verdict without owning the glyph tables. See
 	// detectReadings for when it is filled.
@@ -1761,10 +1765,11 @@ func updateDevicesSnapshot() {
 
 func updateStatusSnapshot() {
 	coreSnapshot.Store(statusCore{
-		Lang:     LANG,
-		Word:     bufferToText(WORD),
-		Window:   ActiveWindowClass,
-		Readings: detectReadings(),
+		Lang:      LANG,
+		Word:      bufferToText(WORD),
+		Window:    ActiveWindowClass,
+		WordGroup: wordLayout,
+		Readings:  detectReadings(),
 	})
 	updateDevicesSnapshot()
 }
@@ -1786,6 +1791,7 @@ func ipcStatus() ipc.Response {
 		WordBuffer:   core.Word,
 		ActiveWindow: core.Window,
 		Readings:     core.Readings,
+		WordGroup:    core.WordGroup,
 		Devices:      devices,
 		Hotkeys:      len(Hotkeys),
 		AutoReplaces: len(AutoReplace),

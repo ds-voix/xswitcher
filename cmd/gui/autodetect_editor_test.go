@@ -21,7 +21,7 @@ func TestPreviewReportGuardOrder(t *testing.T) {
 	in := previewInput{
 		Buffer:    "ghbdtn",
 		Readings:  map[string]string{"en": "ghbdtn", "ru": "привет"},
-		Layout:    0,
+		WordGroup: 0,
 		MinChars:  5,
 		Threshold: 0.2,
 		Groups:    map[string]int{"en": 0, "ru": 1},
@@ -39,23 +39,41 @@ func TestPreviewReportGuardOrder(t *testing.T) {
 		}
 	}
 
-	// MinChars is the brake that acts first: the same run at a threshold that
-	// would let it through must still be refused for length.
+	// The daemon refuses a word typed in a group its Languages list does not name,
+	// before it scores anything. Without this brake the preview promises a
+	// correction the daemon will never make.
+	for _, unnamed := range []int{3, -1} {
+		got = previewReport(withWordGroup(in, unnamed))
+		if !strings.Contains(got, "which Languages does not name") {
+			t.Errorf("group %d was reported as correctable:\n%s", unnamed, got)
+		}
+		if strings.Contains(got, "Best reading") {
+			t.Errorf("group %d reached the model, which the daemon never does:\n%s", unnamed, got)
+		}
+	}
+
+	// MinChars is the brake that acts first among the ones that score: the same
+	// run at a threshold that would let it through must still be refused for
+	// length, and refused for length alone -- the daemon asks the model nothing
+	// about a run this short, so neither may the preview name a winner.
 	if got = previewReport(withMinChars(in, 7)); !strings.Contains(got, "Would NOT be corrected: 6 letters is below MinChars 7.") {
 		t.Errorf("length gate did not speak first:\n%s", got)
+	}
+	if strings.Contains(got, "Best reading") {
+		t.Errorf("a run refused for length still got a winner:\n%s", got)
 	}
 	if got = previewReport(withThreshold(in, 0.5)); !strings.Contains(got, "is below Confidence 0.500.") {
 		t.Errorf("confidence gate did not speak:\n%s", got)
 	}
 	// On the group the model asks for there is nothing to correct, whatever the
 	// confidence says.
-	in.Layout = 1
-	if got = previewReport(in); !strings.Contains(got, "Nothing to do: the winning group 1 is already the current layout.") {
+	in.WordGroup = 1
+	if got = previewReport(in); !strings.Contains(got, "Nothing to do: the winning group 1 is already the group the word was typed in.") {
 		t.Errorf("a word already in the winning group was not left alone:\n%s", got)
 	}
 	// A winner the Languages list does not name cannot be switched to: the preview
 	// says so instead of inventing a group.
-	in.Groups = map[string]int{"en": 0}
+	in.Groups = map[string]int{"en": 0, "de": 1}
 	if got = previewReport(in); !strings.Contains(got, "The form names no group for ru") {
 		t.Errorf("an unnamed winner was reported as switchable:\n%s", got)
 	}
@@ -69,10 +87,11 @@ func TestPreviewReportRefusesToGuess(t *testing.T) {
 		t.Errorf("one reading was previewed anyway:\n%s", got)
 	}
 	// Two readings, neither of them language-like: no verdict, not the lesser of
-	// two nonsense costs.
+	// two nonsense costs. MinChars is zero here because the brake that counts
+	// letters is the daemon's first one and this case is about the model's answer.
 	got = previewReport(previewInput{
 		Buffer: "123456", Readings: map[string]string{"en": "123456", "ru": "123456"},
-		MinChars: 5, Threshold: 0.2, Groups: map[string]int{"en": 0, "ru": 1},
+		MinChars: 0, Threshold: 0.2, Groups: map[string]int{"en": 0, "ru": 1},
 	})
 	if !strings.Contains(got, "No verdict") {
 		t.Errorf("a run that fits nothing still got a winner:\n%s", got)
@@ -94,13 +113,17 @@ func TestPreviewButtonDrivesTheReport(t *testing.T) {
 	defer app.Quit()
 
 	// A real server on a temp socket stands in for the daemon, so the whole
-	// tap -> status -> render path runs without an X server.
+	// tap -> status -> render path runs without an X server. The group is a
+	// variable because the report has to follow the group the daemon says the word
+	// was typed in, and that number travels through the socket as JSON.
 	sock := filepath.Join(t.TempDir(), "daemon.sock")
+	wordGroup := 0
 	srv := ipc.NewServer(sock, func() ipc.Response {
 		return ipc.Response{
 			Ok:         true,
 			WordBuffer: "ghbdtn",
 			Layout:     0,
+			WordGroup:  wordGroup,
 			Readings:   map[string]string{"en": "ghbdtn", "ru": "привет"},
 		}
 	}, nil)
@@ -124,6 +147,15 @@ func TestPreviewButtonDrivesTheReport(t *testing.T) {
 			t.Errorf("the tap left the preview without %q:\n%s", want, e.preview.Text)
 		}
 	}
+
+	// The group the status names is the one the daemon keys on: a word typed in a
+	// group this form does not name must come back refused, not promised.
+	wordGroup = 2
+	test.Tap(e.previewBtn)
+	if !strings.Contains(e.preview.Text, "the word was typed in group 2, which Languages does not name") {
+		t.Errorf("an undeclared word group reached the verdict:\n%s", e.preview.Text)
+	}
+
 	if !e.preview.Disabled() {
 		t.Error("the preview area is meant to be read-only, the button is the only writer")
 	}
@@ -149,6 +181,11 @@ func TestPreviewButtonReportsADeadDaemon(t *testing.T) {
 
 func withMinChars(in previewInput, n int) previewInput {
 	in.MinChars = n
+	return in
+}
+
+func withWordGroup(in previewInput, n int) previewInput {
+	in.WordGroup = n
 	return in
 }
 

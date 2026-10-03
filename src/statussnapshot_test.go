@@ -9,11 +9,14 @@ import (
 // must mirror the serve-loop globals and the attached-device map.
 func TestStatusSnapshotMirrorsServeLoopState(t *testing.T) {
 	oldLang, oldClass := LANG, ActiveWindowClass
-	oldAttached := attached
+	oldWord, oldAttached := wordLayout, attached
 	attached = make(map[string]bool)
-	defer func() { LANG, ActiveWindowClass, attached = oldLang, oldClass, oldAttached }()
+	defer func() {
+		LANG, ActiveWindowClass, wordLayout, attached = oldLang, oldClass, oldWord, oldAttached
+	}()
 
 	LANG = 1
+	wordLayout = 2
 	ActiveWindowClass = "xterm"
 	attached["/dev/input/event42"] = true
 	updateStatusSnapshot()
@@ -21,6 +24,18 @@ func TestStatusSnapshotMirrorsServeLoopState(t *testing.T) {
 	core, devices := currentStatus()
 	if core.Lang != 1 || core.Window != "xterm" {
 		t.Errorf("core = %+v, want Lang 1 and Window xterm", core)
+	}
+	// The GUI's [AutoDetect] preview answers about the group the word was typed
+	// in, which is a different number from the layout the daemon sits on now: 1
+	// here, 2 there. If the snapshot ever collapses the two, the preview promises
+	// corrections the daemon will not make.
+	if core.WordGroup != 2 {
+		t.Errorf("WordGroup = %d, want the 2 the word was typed in, not the current layout %d", core.WordGroup, core.Lang)
+	}
+	wordLayout = -1 // no character of the word recorded yet
+	updateStatusSnapshot()
+	if core, _ = currentStatus(); core.WordGroup != -1 {
+		t.Errorf("WordGroup = %d, want the -1 the daemon means by it", core.WordGroup)
 	}
 	if devices == nil {
 		t.Fatal("devices must be a non-nil slice: the GUI joins it without checks")

@@ -40,4 +40,9 @@ type Response struct {
 	// detection is off, and it carries no text the buffer does not already hold:
 	// these are the same physical keys read in another script.
 	Readings map[string]string `json:"readings,omitempty"`
+	// WordGroup is the XKB group the last word character was typed in, or -1 when
+	// no character of the current word has been recorded yet. It is what
+	// [AutoDetect] compares against, not Layout: a layout change in the middle of
+	// a word leaves the two different.
+	WordGroup int `json:"word_group"`
 }
