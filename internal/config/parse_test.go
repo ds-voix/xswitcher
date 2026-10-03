@@ -212,3 +212,110 @@ func TestDefaultAutoDetect(t *testing.T) {
 			parsed.AutoDetect.MinChars, parsed.AutoDetect.Confidence, def.MinChars, def.Confidence)
 	}
 }
+
+// A self-referential [Action.*] graph is valid TOML, so it used to pass the parser and
+// kill the daemon later: doAction() expands "Action.xxx" with no depth limit, so the
+// cycle overflows the stack on the first keystroke matching the rule -- far from boot and
+// far from the config line that caused it. Rejecting it here rather than only inside the
+// daemon's own boot is what lets all three users of this parser refuse the same file: the
+// respawn gate (src configKillsChild), the GUI's validate command, and the config writer
+// the GUI's Save goes through. Before this, a GUI user could write a cycle, be told the
+// reload succeeded, and have no daemon at all a moment later.
+func TestParseRejectsActionCycles(t *testing.T) {
+	for _, tc := range []struct{ what, cfg, want string }{
+		{"a section pointing at itself", `
+[Action.Looping]
+Action = [ "Action.Looping" ]
+`, `"Action.Looping" refers to itself: Looping -> Looping`},
+		{"two sections pointing at each other", `
+[Action.A]
+Action = [ "Action.B" ]
+
+[Action.B]
+Action = [ "Action.A" ]
+`, `"Action.A" refers to itself: A -> B -> A`},
+		{"a three-section ring", `
+[Action.A]
+Action = [ "Action.B" ]
+
+[Action.B]
+Action = [ "Action.C" ]
+
+[Action.C]
+Action = [ "Action.A" ]
+`, `"Action.A" refers to itself: A -> B -> C -> A`},
+	} {
+		_, err := ParseTOML([]byte(tc.cfg))
+		if err == nil {
+			t.Errorf("%s: the cycle was accepted", tc.what)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: error %q does not name the chain %q", tc.what, err.Error(), tc.want)
+		}
+	}
+}
+
+// The reported chain is only a contract if it is stable. Walking the map in Go's
+// randomized order reported the same ring in one of its rotations, so the assertion could
+// not decide what the daemon prints -- and neither could a user reading the log. Twenty
+// repetitions are what a single run cannot show.
+func TestActionCyclePathIsTheSameEveryRun(t *testing.T) {
+	const ring = `
+[Action.A]
+Action = [ "Action.B" ]
+
+[Action.B]
+Action = [ "Action.C" ]
+
+[Action.C]
+Action = [ "Action.A" ]
+`
+	first := ""
+	const attempts = 20 // 20 rotations all matching is p ~ 3e-10 for an unsorted walk
+	for i := 0; i < attempts; i++ {
+		_, err := ParseTOML([]byte(ring))
+		if err == nil {
+			t.Fatalf("run %d accepted the ring", i)
+		}
+		if first == "" {
+			first = err.Error()
+		} else if err.Error() != first {
+			t.Fatalf("run %d reported %q, run 0 reported %q", i, err.Error(), first)
+		}
+	}
+}
+
+// The negative half: a diamond reaches one section by two paths and is not a cycle, and a
+// chain naming a leaf action function ("RetypeWord") must not be mistaken for a section
+// reference just because a section shares the name. Without these the cycle gate could
+// look satisfied by a check that rejects every graph.
+func TestParseAcceptsAcyclicActionGraphs(t *testing.T) {
+	for _, cfg := range []string{
+		``,
+		`
+[Action.RetypeWord]
+Action = [ "Action.CyclicSwitch", "RetypeWord" ]
+
+[Action.CyclicSwitch]
+Action = [ "Switch" ]
+`,
+		`
+[Action.A]
+Action = [ "Action.B", "Action.C" ]
+
+[Action.B]
+Action = [ "Action.D" ]
+
+[Action.C]
+Action = [ "Action.D" ]
+
+[Action.D]
+Action = [ "Layout" ]
+`,
+	} {
+		if _, err := ParseTOML([]byte(cfg)); err != nil {
+			t.Errorf("acyclic graph rejected: %v", err)
+		}
+	}
+}

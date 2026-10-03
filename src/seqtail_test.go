@@ -5,6 +5,16 @@ import (
 	"testing"
 )
 
+// actionSets builds an [Action.*] lookup table from name -> action chain, the shape
+// the daemon keeps in the ActionSet global.
+func actionSets(chains map[string][]string) map[string]TAction {
+	set := make(map[string]TAction, len(chains))
+	for name, actions := range chains {
+		set[name] = TAction{Action: actions}
+	}
+	return set
+}
+
 // RetypeWord() takes EXTRA -- how many trailing events belong to the shortcut itself -- from
 // the length of the matched SEQ tail, so a tail that can match a varying number of key events
 // silently changes how much of the word gets wiped.

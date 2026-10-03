@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -464,5 +465,61 @@ func ParseTOML(data []byte) (*ParsedConfig, error) {
 		return nil, fmt.Errorf("[AutoDetect] cannot be Enabled together with [Wayland] BypassX = true: the layout is not observable there")
 	}
 
+	// A self-referential [Action.*] graph is as fatal as a syntax error: the daemon
+	// expands "Action.xxx" by unbounded recursion, so the cycle overflows the stack on
+	// the first keystroke matching the rule -- long after boot, far from the config
+	// line that caused it. It lives here rather than in the daemon because this parser
+	// is what the respawn gate (configKillsChild), the GUI's validate command and the
+	// config writer all share, and a check only the daemon runs is a check the file
+	// reaches the child having already passed.
+	if err := checkActionCycles(out.ActionSet); err != nil {
+		return nil, err
+	}
+
 	return out, nil
+}
+
+// checkActionCycles reports the first [Action.*] section that can be reached from
+// itself. A value in some action's Action list reading "Action.<name>" is a reference
+// doAction() follows, so the walk mirrors that expansion. Reaching a node by two paths
+// is a diamond, not a cycle, hence the separate checked state. Roots are walked in
+// sorted order because Go randomizes map iteration and the reported chain is the path
+// from whichever root reached the cycle first -- the same file must name the same chain.
+func checkActionCycles(set map[string]TAction) error {
+	const (
+		visiting = 1
+		checked  = 2
+	)
+	state := make(map[string]int, len(set))
+	var walk func(name, chain string) error // chain: the path from the root, ending with name
+	walk = func(name, chain string) error {
+		switch state[name] {
+		case checked:
+			return nil
+		case visiting:
+			return fmt.Errorf("\"Action.%s\" refers to itself: %s", name, chain)
+		}
+		state[name] = visiting
+		for _, act := range set[name].Action {
+			if ActionMatchRe.MatchString(act) {
+				ref := strings.TrimLeft(ActionNameRe.FindString(act), ".")
+				if err := walk(ref, chain+" -> "+ref); err != nil {
+					return err
+				}
+			}
+		}
+		state[name] = checked
+		return nil
+	}
+	names := make([]string, 0, len(set))
+	for name := range set {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if err := walk(name, name); err != nil {
+			return err
+		}
+	}
+	return nil
 }

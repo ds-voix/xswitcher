@@ -318,48 +318,11 @@ func config() {
 	Diary = parsed.Diary
 	AutoDetect = parsed.AutoDetect
 
-	checkActionCycles()
 	collectManagedLayouts()
 	buildAutoReplace()
 	buildHotkeys()
 	initDiary()
 	buildAutoDetect()
-}
-
-// doAction() expands "Action.xxx" references recursively and has no depth limit, so a
-// chain that leads back to itself runs until the process dies of a stack overflow -- on
-// the first keystroke matching the rule, far away from the config line that caused it.
-// Reject such a config while parsing it.
-func checkActionCycles() {
-	const (visiting = 1; checked = 2)
-	state := make(map[string]int, len(ActionSet))
-	var walk func(name, chain string) // chain: the path from the root, ending with name
-	walk = func(name, chain string) {
-		switch state[name] {
-		case checked:
-			return // Already proved acyclic: a diamond is not a cycle
-		case visiting:
-			panic(fmt.Errorf("Config error: \"Action.%s\" refers to itself: %s", name, chain))
-		}
-		state[name] = visiting
-		for _, act := range ActionSet[name].Action {
-			if Action.MatchString(act) { // "Action.xxx" >> the same recursion doAction() does
-				ref := strings.TrimLeft(ActionName.FindString(act), ".")
-				walk(ref, chain+" -> "+ref)
-			}
-		}
-		state[name] = checked
-	}
-	// Go randomizes map iteration and walk() reports a cycle as the path from whichever
-	// root reached it first, so the same config got "A -> B -> C -> A" or "C -> A -> B -> C".
-	names := make([]string, 0, len(ActionSet))
-	for name := range ActionSet {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		walk(name, name)
-	}
 }
 
 // Substitute templates "@xxx@"
@@ -1685,9 +1648,10 @@ func connectEvents(connectPath string) {
 // https://gravitational.com/blog/golang-ssh-bastion-graceful-restarts/
 func forkChild() (*os.Process, error) {
 	// Every respawn in this program funnels through here: the reload command, the Respawn
-	// action a user binds to a hotkey, and the re-exec that waits for the DE at startup.
-	// Handing over a file the child cannot parse kills the keyboard through all three, so
-	// the one fatal state is refused once here instead of at each caller.
+	// action a user binds to a hotkey or an [[Actions]] entry, and the re-exec that waits
+	// for the DE at startup. Handing over a file the child cannot boot through kills the
+	// keyboard through all three, so the states the shared parser can name are refused
+	// once here instead of at each caller. configKillsChild says what still slips past it.
 	if err := configKillsChild(); err != nil {
 		return nil, err
 	}
@@ -1846,19 +1810,26 @@ func ipcSetConfig(mods map[string]any) error {
 	return cfg.WriteTOMLChecked(CONFIG_PATH, normalized)
 }
 
-// configKillsChild reports the config state a respawned child cannot boot through: a file
-// that can be read and cannot be parsed, which is what config() panics on (line 308) after
-// the parent is already gone. A file that cannot be read is NOT fatal -- config() logs it
-// and comes up on the embedded defaults, which is how the parent itself booted; refusing
-// that would also stop the startup DE-wait re-exec, and a user with no config file at all
-// still needs it, because without the re-exec the DE unmaps the keys xswitcher grabbed.
+// configKillsChild reports whether a respawned child would die on the config that is on
+// disk: the file is read and given to the same parser the daemon boots with, so invalid
+// TOML and an [Action.*] cycle are both refused here, before the parent lets go. A file
+// that cannot be read is NOT fatal -- config() logs it and comes up on the embedded
+// defaults, which is how the parent itself booted; refusing that would also stop the
+// startup DE-wait re-exec, and a user with no config file at all still needs it, because
+// without the re-exec the DE unmaps the keys xswitcher grabbed.
+//
+// What this gate cannot see is everything the parser leaves for the daemon: sequences()
+// and keys() panic AFTER it returned -- an invalid WordChars/WordHead/OFF/ON/SEQ regex, a
+// duplicated OFF/ON/SEQ declaration, an unresolvable key name -- and serve() panics on a
+// [ScanDevices] Test path that is not there. main() recovers from every one of them and
+// returns, so the child exits successfully with its parent already gone.
 func configKillsChild() error {
 	data, err := os.ReadFile(CONFIG_PATH)
 	if err != nil {
 		return nil
 	}
 	if _, err = cfg.ParseTOML(data); err != nil {
-		return fmt.Errorf("config %s is not parsable: %w", CONFIG_PATH, err)
+		return fmt.Errorf("%s would kill the respawned child: %w", CONFIG_PATH, err)
 	}
 	return nil
 }

@@ -331,7 +331,7 @@ EN=$(readings_value en); RU=$(readings_value ru)
 [ "$EN" = "r" ] && [ "$RU" = "к" ]
 check "p5 readings spell the buffered key in both scripts (en=$EN ru=$RU)" "$?"
 
-# Phase 6 -- reload must refuse a file the respawned child could not parse.
+# Phase 6 -- reload must refuse a config the respawned child would die on.
 #
 # set_config already validates through WriteTOMLChecked, so a broken config can
 # only arrive out of band: a hand edit, a partial write, another tool. Reload is
@@ -339,6 +339,12 @@ check "p5 readings spell the buffered key in both scripts (en=$EN ru=$RU)" "$?"
 # its way up and panics on a file it cannot parse -- and by then the parent has
 # already scheduled its own exit. Without the gate the keyboard dies and the GUI
 # is left holding a response that said the respawn had started.
+#
+# Two shapes kill that boot: a file the shared parser rejects outright, and one that is
+# perfectly valid TOML -- an [Action.*] graph leading back to itself. The second is the
+# reason the cycle check lives in the parser instead of only in the daemon's boot: the
+# respawn gate, the GUI's validate command and the writer behind the GUI's Save all read
+# their answer off the same ParseTOML, so refusing it once there refuses it everywhere.
 #
 # The check itself sits in forkChild, because the Respawn action (a hotkey or an
 # [[Actions]] entry) and the startup DE-wait re-exec go through it too. Neither of
@@ -423,11 +429,44 @@ cp /tmp/smoke-reload-backup.conf "$CONF"
 respawn; RC=$?
 check "p6 $RESPAWN_STAGE" "$RC"
 [ "$RC" = "0" ] || { say "FATAL: daemon gone after the p6 reload" ""; tail -20 "$LOG"; exit 9; }
-# The gate is for the one state that actually kills a child. A file the child cannot even
-# open is not that state: config() logs it and boots the embedded defaults, and that is also
-# the only way a user who runs xswitcher without a config file ever gets the startup DE-wait
-# re-exec. So this block is the counter-check to the refusal above: it fails if the gate
-# ever grows back into a blanket "cannot read means refuse".
+# A file the child cannot even open is not one of the states the gate refuses: config() logs
+# it and boots the embedded defaults, and that is also the only way a user who runs xswitcher
+# without a config file ever gets the startup DE-wait re-exec. So this block is the
+# counter-check to the refusals above: it fails if the gate ever grows back into a blanket
+# "cannot read means refuse".
+# The second state that kills a child is a file that IS valid TOML: an [Action.*] graph that
+# leads back to itself. Nothing about the syntax complains, and doAction() only finds out when
+# it recurses on the first keystroke the rule matches -- which is why the check lives in the
+# shared parser and not in the daemon's boot: the respawn gate, the GUI's validate command and
+# the writer behind the GUI's Save button all read the same answer off one ParseTOML.
+PID_CYCLED=$(status_value pid)
+case "$PID_CYCLED" in
+    ''|*[!0-9]*) say "FATAL: p6 read no pid before the cycle test: '$PID_CYCLED'" ""; exit 9 ;;
+esac
+cp "$CONF" /tmp/smoke-cycle-backup.conf
+cat >> "$CONF" <<'TOML'
+
+[Action.SmokeA]
+Action = [ "Action.SmokeB" ]
+
+[Action.SmokeB]
+Action = [ "Action.SmokeA" ]
+TOML
+REPLY=$(reload_reply)
+case "$REPLY" in refused:*) true ;; *) false ;; esac
+check "p6 reload refused the [Action.*] cycle" "$?"
+echo "$REPLY" | grep -q "refers to itself"
+check "p6 the refusal names the cycle it refused" "$?"
+sleep 1   # past the window a respawning parent uses to exit
+ping_alive
+check "p6 the daemon still serves after refusing the cycle" "$?"
+[ "$(status_value pid)" = "$PID_CYCLED" ]
+check "p6 refusing the cycle forked no child" "$?"
+cp /tmp/smoke-cycle-backup.conf "$CONF"
+respawn; RC=$?
+check "p6 $RESPAWN_STAGE with the cycle taken back out" "$RC"
+[ "$RC" = "0" ] || { say "FATAL: daemon gone after the cycle restore" ""; tail -20 "$LOG"; exit 9; }
+
 PID_RESTORED=$(status_value pid)
 case "$PID_RESTORED" in ''|*[!0-9]*) say "FATAL: p6 read no pid after the restore" ""; exit 9 ;; esac
 rm -f "$CONF"
