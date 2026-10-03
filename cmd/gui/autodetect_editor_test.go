@@ -6,8 +6,13 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"fyne.io/fyne/v2/test"
+
+	"xswitcher/internal/ipc"
 )
 
 func TestPreviewReportGuardOrder(t *testing.T) {
@@ -81,6 +86,64 @@ func TestLanguageGroups(t *testing.T) {
 	}
 	if groups["en"] != 0 || groups["ru"] != 1 {
 		t.Errorf("groups: %v", groups)
+	}
+}
+
+func TestPreviewButtonDrivesTheReport(t *testing.T) {
+	app := test.NewApp()
+	defer app.Quit()
+
+	// A real server on a temp socket stands in for the daemon, so the whole
+	// tap -> status -> render path runs without an X server.
+	sock := filepath.Join(t.TempDir(), "daemon.sock")
+	srv := ipc.NewServer(sock, func() ipc.Response {
+		return ipc.Response{
+			Ok:         true,
+			WordBuffer: "ghbdtn",
+			Layout:     0,
+			Readings:   map[string]string{"en": "ghbdtn", "ru": "привет"},
+		}
+	}, nil)
+	if err := srv.Start(); err != nil {
+		t.Fatalf("listen on %s: %v", sock, err)
+	}
+	defer srv.Stop()
+
+	_, e := newAutodetectEditor(ipc.NewClient(sock))
+	e.conf.SetText("0.2")
+	e.languages.SetText("0:en\n1:ru")
+
+	test.Tap(e.previewBtn)
+
+	for _, want := range []string{
+		`Buffer: "ghbdtn" (6 letters)`,
+		"Best reading: ru at confidence 0.379",
+		"WOULD be corrected to ru: group 1 instead of 0.",
+	} {
+		if !strings.Contains(e.preview.Text, want) {
+			t.Errorf("the tap left the preview without %q:\n%s", want, e.preview.Text)
+		}
+	}
+	if !e.preview.Disabled() {
+		t.Error("the preview area is meant to be read-only, the button is the only writer")
+	}
+}
+
+func TestPreviewButtonReportsADeadDaemon(t *testing.T) {
+	app := test.NewApp()
+	defer app.Quit()
+
+	// Nothing listens here, and the answer still has to reach the user: a button
+	// that failed silently would be indistinguishable from an empty buffer.
+	absent := filepath.Join(t.TempDir(), "absent.sock")
+	_, e := newAutodetectEditor(ipc.NewClient(absent))
+	test.Tap(e.previewBtn)
+
+	if !strings.HasPrefix(e.preview.Text, "Status failed: ") {
+		t.Errorf("a dead daemon produced no report:\n%q", e.preview.Text)
+	}
+	if !strings.Contains(e.preview.Text, absent) {
+		t.Errorf("the report does not name the socket it could not reach:\n%q", e.preview.Text)
 	}
 }
 

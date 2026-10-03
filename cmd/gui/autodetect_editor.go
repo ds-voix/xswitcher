@@ -23,13 +23,14 @@ import (
 )
 
 type autodetectEditor struct {
-	client    *ipc.Client
-	enabled   *widget.Check
-	minChars  *widget.Entry
-	conf      *widget.Entry
-	languages *widget.Entry
-	note      *widget.Label
-	preview   *widget.Entry
+	client     *ipc.Client
+	enabled    *widget.Check
+	minChars   *widget.Entry
+	conf       *widget.Entry
+	languages  *widget.Entry
+	note       *widget.Label
+	preview    *widget.Entry
+	previewBtn *widget.Button
 }
 
 func newAutodetectEditor(client *ipc.Client) (fyne.CanvasObject, *autodetectEditor) {
@@ -69,7 +70,7 @@ func newAutodetectEditor(client *ipc.Client) (fyne.CanvasObject, *autodetectEdit
 	e.preview = widget.NewMultiLineEntry()
 	e.preview.Wrapping = fyne.TextWrapWord
 	e.preview.Disable()
-	previewBtn := widget.NewButton("Preview current buffer", e.previewNow)
+	e.previewBtn = widget.NewButton("Preview current buffer", e.previewNow)
 	previewHint := widget.NewLabel("The daemon judges a word when it is completed; the preview judges the " +
 		"whole buffer as it stands. The layout it compares against is the one the status reports now, " +
 		"while the daemon uses the group the last word character was typed in.")
@@ -79,7 +80,7 @@ func newAutodetectEditor(client *ipc.Client) (fyne.CanvasObject, *autodetectEdit
 		widget.NewCard("[AutoDetect] settings", "", form),
 		hint,
 		e.note,
-		widget.NewCard("Preview", "", container.NewVBox(previewBtn, previewHint, e.preview)),
+		widget.NewCard("Preview", "", container.NewVBox(e.previewBtn, previewHint, e.preview)),
 	)), e
 }
 
