@@ -1,8 +1,9 @@
 // Package main — see main.go for overview.
 // editor.go provides the config editor panel: Basics forms (ScanDevices,
 // Keyboard, Wayland) plus structured sub-tabs for [ActionKeys], [Templates],
-// [[WindowClasses]] and [Action.*], and a read-only view of whatever sections
-// remain unbound. Bound to the daemon via IPC get_config/set_config.
+// [[WindowClasses]], [Action.*] and [AutoDetect], and a read-only view of
+// whatever sections remain unbound. Bound to the daemon via IPC
+// get_config/set_config.
 package main
 
 import (
@@ -38,6 +39,7 @@ type configPanel struct {
 	actionKeys    *actionKeysEditor
 	autoReplace   *autoReplaceEditor
 	hotkeys       *hotkeysEditor
+	autoDetect    *autodetectEditor
 	sounds        *soundsEditor
 	diary         *diaryEditor
 	router        *soundRouter
@@ -113,6 +115,8 @@ func newEditorPanel(client *ipc.Client, router *soundRouter) (fyne.CanvasObject,
 	p.autoReplace = ars
 	hkObj, hks := newHotkeysEditor()
 	p.hotkeys = hks
+	adObj, ads := newAutodetectEditor(client)
+	p.autoDetect = ads
 	sndObj, snds := newSoundsEditor(router.player)
 	p.sounds = snds
 	diaryObj, dy := newDiaryEditor(client)
@@ -137,6 +141,7 @@ func newEditorPanel(client *ipc.Client, router *soundRouter) (fyne.CanvasObject,
 		container.NewTabItem("WindowClasses", wcObj),
 		container.NewTabItem("AutoReplace", arObj),
 		container.NewTabItem("Hotkeys", hkObj),
+		container.NewTabItem("AutoDetect", adObj),
 		container.NewTabItem("Sounds", sndObj),
 		container.NewTabItem("Diary", diaryObj),
 		container.NewTabItem("Actions", actObj),
@@ -186,6 +191,28 @@ func mapBool(m map[string]any, key string) bool {
 	return v
 }
 
+// mapNum formats a numeric field the way the file writes it. JSON turns every
+// TOML number into float64, so an integral value has to lose its ".0" while the
+// one real fraction in the config — the [AutoDetect] Confidence threshold —
+// keeps its digits. mapInt would print 0.2 as "0".
+func mapNum(m map[string]any, key string) string {
+	if m == nil {
+		return ""
+	}
+	switch v := m[key].(type) {
+	case float64:
+		if i := int64(v); float64(i) == v {
+			return strconv.FormatInt(i, 10)
+		}
+		return strconv.FormatFloat(v, 'g', -1, 64)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case int:
+		return strconv.Itoa(v)
+	}
+	return ""
+}
+
 func mapList(m map[string]any, key string) string {
 	if m == nil {
 		return ""
@@ -233,6 +260,7 @@ func (p *configPanel) load() {
 	p.windowClasses.load(data)
 	p.autoReplace.load(data)
 	p.hotkeys.load(data)
+	p.autoDetect.load(data)
 	p.sounds.load(data, p.router)
 	p.diary.load(data)
 	p.actions.load(data)
@@ -281,6 +309,7 @@ func (p *configPanel) modsFromWidgets() map[string]any {
 		p.windowClasses.mods(),
 		p.autoReplace.mods(),
 		p.hotkeys.mods(),
+		p.autoDetect.mods(),
 		p.sounds.mods(),
 		p.diary.mods(),
 		p.actions.mods(),
@@ -342,7 +371,7 @@ func renderRawSections(data map[string]any) string {
 		switch key {
 		case "ScanDevices", "Keyboard", "Wayland",
 			"Action", "ActionKeys", "Templates", "WindowClasses",
-			"AutoReplace", "Hotkeys", "Sounds", "Diary":
+			"AutoReplace", "Hotkeys", "Sounds", "Diary", "AutoDetect":
 			continue
 		}
 		filtered[key] = normalizeFloats(value)
