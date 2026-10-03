@@ -35,10 +35,17 @@ func initDiary() {
 	}
 }
 
-// recordDiary appends one completed word. The diary is user text, so
-// failures must be loud in the log but never disturb typing.
-func recordDiary(text string) {
-	if diaryW == nil || text == "" {
+// recordDiary appends one completed word. It takes the raw buffer rather than
+// text because it sits on the keystroke path and the diary is opt-in: rendering
+// the word costs an allocation per word typed even when nothing records it.
+// The diary is user text, so failures must be loud in the log but never disturb
+// typing.
+func recordDiary(word t_keys) {
+	if diaryW == nil {
+		return
+	}
+	text := bufferToText(word)
+	if text == "" {
 		return
 	}
 	if err := diaryW.Write(text); err != nil && (*VERBOSE || *DEBUG) {

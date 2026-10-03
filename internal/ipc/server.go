@@ -192,20 +192,26 @@ func (s *Server) handleConn(conn net.Conn) {
 
 // Broadcast pushes an event line to every subscribed connection. A dead
 // subscription is dropped on the spot; handleConn cleans the connection up
-// when its read loop notices the same error. The daemon's hot path only
-// pays a map snapshot here — the conn write locks are taken outside s.mu.
+// when its read loop notices the same error. The daemon's hot path pays only a
+// subscription-count check while the GUI is not connected: an event nobody
+// subscribed to is neither marshalled nor given a writer slice. When the GUI is
+// connected, the conn write locks are taken outside s.mu.
 func (s *Server) Broadcast(ev Event) {
-	data, err := json.Marshal(ev)
-	if err != nil {
+	s.mu.Lock()
+	if len(s.subs) == 0 {
+		s.mu.Unlock()
 		return
 	}
-	data = append(data, '\n')
-	s.mu.Lock()
 	writers := make([]*connWriter, 0, len(s.subs))
 	for w := range s.subs {
 		writers = append(writers, w)
 	}
 	s.mu.Unlock()
+	data, err := json.Marshal(ev)
+	if err != nil {
+		return
+	}
+	data = append(data, '\n')
 	for _, w := range writers {
 		if err := w.writeLine(data); err != nil {
 			s.mu.Lock()

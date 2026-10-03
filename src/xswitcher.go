@@ -1482,7 +1482,7 @@ func doWindowActions() {
 			fmt.Printf("NewWord: %s\n", TAIL.String()[1:])
 		}
 		if EXTRA >= 0 && len(WORD)-EXTRA >= 1 { // the word the user just finished — diary time
-			recordDiary(bufferToText(WORD[:len(WORD)-EXTRA]))
+			recordDiary(WORD[:len(WORD)-EXTRA])
 		}
 		tryAutoReplace()
 		tryAutoDetect()
