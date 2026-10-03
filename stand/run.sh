@@ -92,11 +92,15 @@ check "B1 go build ./src/" "0"
 go vet ./src/ >/tmp/vet.log 2>&1; VET=$?
 grep -v '^go: downloading' /tmp/vet.log | head -20
 check "B2 go vet ./src/" "$VET"
-# Exclude cmd/gui from tests: the GUI uses Fyne which requires display/GPU
-# libraries not present in the headless stand container (plan constraint #12).
-go test $(go list ./... | grep -v '/cmd/gui') >/tmp/test.log 2>&1; TEST=$?
+# cmd/gui belongs in this run. Its tests drive widgets through Fyne's in-process
+# test driver, which needs no X server: measured in this container on 2026-10-03,
+# the whole package passes in 0.055 s. The exclusion this line carried claimed a
+# display dependency that no longer holds, and left every GUI test out of the
+# stand - which is how the Preview-button wiring stayed unverified for three
+# phases while the stand still reported ALL GREEN.
+go test ./... >/tmp/test.log 2>&1; TEST=$?
 grep -vE '^(go: |ok)' /tmp/test.log | head -5
-check "B3 go test (daemon packages)" "$TEST"
+check "B3 go test (all packages)" "$TEST"
 
 echo "--- 5. run xswitcher ---"
 /tmp/xswitcher -v -c "$CONF" >"$LOG" 2>&1 &
