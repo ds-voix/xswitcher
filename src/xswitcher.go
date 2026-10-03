@@ -1684,6 +1684,13 @@ func connectEvents(connectPath string) {
 
 // https://gravitational.com/blog/golang-ssh-bastion-graceful-restarts/
 func forkChild() (*os.Process, error) {
+	// Every respawn in this program funnels through here: the reload command, the Respawn
+	// action a user binds to a hotkey, and the re-exec that waits for the DE at startup.
+	// Handing over a file the child cannot parse kills the keyboard through all three, so
+	// the one fatal state is refused once here instead of at each caller.
+	if err := configKillsChild(); err != nil {
+		return nil, err
+	}
 	// Pass stdin, stdout, and stderr to the child.
 	files := []*os.File{
 		os.Stdin,
@@ -1715,7 +1722,7 @@ func forkChild() (*os.Process, error) {
 func Respawn(*TAction) { // Completelly respawn xswitcher.
 	p, err := forkChild()
 	if err != nil {
-		fmt.Printf("Unable to fork child: %v.\n", err)
+		fmt.Printf("Respawn skipped: %v.\n", err)
 		return
 	}
 	fmt.Printf("Forked child %v.\n", p.Pid)
@@ -1801,17 +1808,12 @@ func ipcStatus() ipc.Response {
 }
 
 func ipcReload() ipc.Response {
-	// Reload is a respawn, and the child parses this same file on its way up: config()
-	// panics on a file it cannot parse (src/xswitcher.go:308) and exits on one it cannot
-	// even open, and by then the parent has already scheduled its own exit -- the daemon is
-	// gone and the GUI, which was told the respawn had started, never learns why the
-	// keyboard stopped. So the file the child is about to inherit is validated first.
-	if err := ipcValidate(); err != nil {
-		return ipc.Response{Ok: false, Error: fmt.Sprintf("reload refused, %s kept as is: %v", CONFIG_PATH, err)}
-	}
+	// forkChild() refuses to hand over a config the child could not parse, and a refusal
+	// means this process and its file both stay exactly as they were -- which is what the
+	// GUI has to hear, since it asked for a reload that did not happen.
 	p, err := forkChild()
 	if err != nil {
-		return ipc.Response{Ok: false, Error: fmt.Sprintf("respawn: %v", err)}
+		return ipc.Response{Ok: false, Error: fmt.Sprintf("reload refused, config kept as is: %v", err)}
 	}
 	// Give the IPC response a chance to reach the GUI before this process exits.
 	go func() {
@@ -1844,7 +1846,26 @@ func ipcSetConfig(mods map[string]any) error {
 	return cfg.WriteTOMLChecked(CONFIG_PATH, normalized)
 }
 
-func ipcValidate() error {
+// configKillsChild reports the config state a respawned child cannot boot through: a file
+// that can be read and cannot be parsed, which is what config() panics on (line 308) after
+// the parent is already gone. A file that cannot be read is NOT fatal -- config() logs it
+// and comes up on the embedded defaults, which is how the parent itself booted; refusing
+// that would also stop the startup DE-wait re-exec, and a user with no config file at all
+// still needs it, because without the re-exec the DE unmaps the keys xswitcher grabbed.
+func configKillsChild() error {
+	data, err := os.ReadFile(CONFIG_PATH)
+	if err != nil {
+		return nil
+	}
+	if _, err = cfg.ParseTOML(data); err != nil {
+		return fmt.Errorf("config %s is not parsable: %w", CONFIG_PATH, err)
+	}
+	return nil
+}
+
+// validateConfig is the strict version the GUI asks for: here an unreadable file is worth
+// reporting, because the user is about to be told their settings are not on disk.
+func validateConfig() error {
 	data, err := os.ReadFile(CONFIG_PATH)
 	if err != nil {
 		return err
@@ -1949,7 +1970,7 @@ func main() {
 	// removes the race without a mutex.
 	sockPath := ipc.SocketPath()
 	srv := ipc.NewServer(sockPath, ipcStatus, ipcReload)
-	srv.SetConfigHandler(ipcGetConfig, ipcSetConfig, ipcValidate)
+	srv.SetConfigHandler(ipcGetConfig, ipcSetConfig, validateConfig)
 	srv.SetDiaryHandler(ipcGetDiary)
 	ipcSrv = srv
 	go func() {

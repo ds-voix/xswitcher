@@ -339,6 +339,11 @@ check "p5 readings spell the buffered key in both scripts (en=$EN ru=$RU)" "$?"
 # its way up and panics on a file it cannot parse -- and by then the parent has
 # already scheduled its own exit. Without the gate the keyboard dies and the GUI
 # is left holding a response that said the respawn had started.
+#
+# The check itself sits in forkChild, because the Respawn action (a hotkey or an
+# [[Actions]] entry) and the startup DE-wait re-exec go through it too. Neither of
+# those answers to anything from here, so src/forkchild_test.go is what proves them;
+# this phase proves the one caller that does: reload.
 reload_reply() { # prints ok, refused:<error>, or dead when nothing answers
     python3 - "$SOCK" <<'PY'
 import json, socket, sys
@@ -377,6 +382,12 @@ PY
 }
 
 PID_BEFORE=$(status_value pid)
+# Every later check of this phase compares against this value, and an empty or
+# non-numeric read would make "the same process serves on" compare two empties and
+# pass -- the exact opposite of what the phase is for.
+case "$PID_BEFORE" in
+    ''|*[!0-9]*) say "FATAL: p6 read no pid before the reload: '$PID_BEFORE'" ""; exit 9 ;;
+esac
 cp "$CONF" /tmp/smoke-reload-backup.conf
 printf '%s\n' 'this is not = valid = toml' >> "$CONF"
 BEFORE_HASH=$(sha256sum "$CONF" | cut -c1-16)
@@ -385,6 +396,8 @@ REPLY=$(reload_reply)
 case "$REPLY" in refused:*) true ;; *) false ;; esac
 check "p6 reload refused the unparsable file" "$?"
 echo "$REPLY" | grep -q "kept as is"
+check "p6 the refusal says it kept the file" "$?"
+echo "$REPLY" | grep -qF "$CONF"
 check "p6 the refusal names the file it kept" "$?"
 # A refusal must not have handed over: a parent that respawns exits about 200 ms
 # after answering, so this pause is what separates "refused and still serving" from
@@ -400,6 +413,9 @@ check "p6 the same process serves on, no child was forked" "$?"
 AFTER_HASH=$(sha256sum "$CONF" | cut -c1-16)
 [ "$BEFORE_HASH" = "$AFTER_HASH" ]
 check "p6 the refused reload left the file byte-identical" "$?"
+# An invariant, not a discriminator: no reload path writes this file, so removing the
+# gate cannot fail this line. It is here for a future writer bug, and the checks that
+# do answer for the gate are the refusal, the pause and the PID comparison above.
 
 # And the refusal is about this file, not about reload in general: with the good
 # config back on disk the same command respawns and answers again.
@@ -407,6 +423,26 @@ cp /tmp/smoke-reload-backup.conf "$CONF"
 respawn; RC=$?
 check "p6 $RESPAWN_STAGE" "$RC"
 [ "$RC" = "0" ] || { say "FATAL: daemon gone after the p6 reload" ""; tail -20 "$LOG"; exit 9; }
+# The gate is for the one state that actually kills a child. A file the child cannot even
+# open is not that state: config() logs it and boots the embedded defaults, and that is also
+# the only way a user who runs xswitcher without a config file ever gets the startup DE-wait
+# re-exec. So this block is the counter-check to the refusal above: it fails if the gate
+# ever grows back into a blanket "cannot read means refuse".
+PID_RESTORED=$(status_value pid)
+case "$PID_RESTORED" in ''|*[!0-9]*) say "FATAL: p6 read no pid after the restore" ""; exit 9 ;; esac
+rm -f "$CONF"
+REPLY=$(reload_reply)
+[ "$REPLY" = "ok" ]
+check "p6 a vanished config still respawns" "$?"
+sleep 1
+PID_VANISHED=$(status_value pid)
+[ -n "$PID_VANISHED" ] && [ "$PID_VANISHED" != "$PID_RESTORED" ]
+check "p6 the vanished config handed over to a new pid ($PID_VANISHED)" "$?"
+echo "$PID_VANISHED" > /tmp/smoke-child.pid
+cp /tmp/smoke-reload-backup.conf "$CONF"
+respawn; RC=$?
+check "p6 $RESPAWN_STAGE with the real config back" "$RC"
+[ "$RC" = "0" ] || { say "FATAL: daemon gone after the defaults respawn" ""; tail -20 "$LOG"; exit 9; }
 
 if [ "$FAILED" = "0" ]; then echo "SMOKE_EXIT=0 ALL GREEN"; else echo "SMOKE_EXIT=1"; tail -20 "$LOG"; fi
 exit "$FAILED"
