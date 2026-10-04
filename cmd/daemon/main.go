@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"xswitcher/internal/ipc"
+	"xswitcher/internal/l10n"
 )
 
 func main() {
@@ -29,21 +30,25 @@ func main() {
 	// This file exists as a placeholder for the future thin-wrapper architecture.
 	// The actual IPC integration happens in src/xswitcher.go for now.
 
+	// The catalogue is resolved before the first line is printed, exactly as the
+	// daemon core does it: without Init every message below falls back to its
+	// English literal, so a Russian operator would still get English back.
+	l10n.MustInitFromEnv()
 	sockPath := ipc.SocketPath()
 
 	srv := ipc.NewServer(sockPath, nil, nil)
 	if err := srv.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "IPC server failed to start: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s\n", l10n.X("daemon.ipc_start_failed", "IPC server failed to start: {{.Err}}", "Err", err))
 		os.Exit(1)
 	}
 	defer srv.Stop()
 
-	fmt.Printf("IPC server listening on %s\n", sockPath)
+	fmt.Println(l10n.X("daemon.ipc_listening", "IPC server listening on {{.Path}}", "Path", sockPath))
 
 	// Wait for termination signal.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 
-	fmt.Println("Shutting down IPC server.")
+	fmt.Println(l10n.X("daemon.ipc_shutting_down", "Shutting down IPC server."))
 }

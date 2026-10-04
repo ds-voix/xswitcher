@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"xswitcher/internal/autodetect"
+	"xswitcher/internal/l10n"
 )
 
 // ruGlyphs spells the canonical key positions of src/keys.go in Cyrillic, on the
@@ -87,17 +88,17 @@ func buildAutoDetect() {
 	for _, item := range AutoDetect.Languages {
 		sep := strings.Index(item, ":")
 		if sep < 0 {
-			fmt.Printf("AutoDetect warning: entry %q is not \"<group>:<language>\"\n", item)
+			fmt.Printf("%s\n", l10n.X("daemon.autodetect_bad_entry", "AutoDetect warning: entry {{.Item}} is not \"<group>:<language>\"", "Item", item))
 			continue
 		}
 		group, err := strconv.Atoi(strings.TrimSpace(item[:sep]))
 		if err != nil {
-			fmt.Printf("AutoDetect warning: entry %q names no usable group\n", item)
+			fmt.Printf("%s\n", l10n.X("daemon.autodetect_bad_group", "AutoDetect warning: entry {{.Item}} names no usable group", "Item", item))
 			continue
 		}
 		lang := strings.TrimSpace(item[sep+1:])
 		if _, ok := detectSpellings[lang]; !ok {
-			fmt.Printf("AutoDetect warning: entry %q names a language with no glyph table\n", item)
+			fmt.Printf("%s\n", l10n.X("daemon.autodetect_no_glyph_table", "AutoDetect warning: entry {{.Item}} names a language with no glyph table", "Item", item))
 			continue
 		}
 		detectGroupOf[lang] = group

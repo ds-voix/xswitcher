@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	cfg "xswitcher/internal/config"
+	"xswitcher/internal/l10n"
 )
 
 var hotkeyByTrigger = map[string][]THotkey{}
@@ -25,7 +26,7 @@ func buildHotkeys() {
 	}
 	for name := range hotkeyByTrigger {
 		if _, ok := key_def[name]; !ok || key_def[name] == 0 {
-			fmt.Printf("Hotkey warning: unknown key %q can never fire\n", name)
+			fmt.Printf("%s\n", l10n.X("daemon.hotkey_unknown_key", "Hotkey warning: unknown key {{.Name}} can never fire", "Name", name))
 		}
 	}
 }

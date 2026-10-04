@@ -53,7 +53,7 @@ func main() {
 	}
 	applyFyneLocale(code)
 
-	a := app.New()
+	a := app.NewWithID("com.github.xswitcher.gui")
 	w := a.NewWindow("xswitcher")
 	w.Resize(fyne.NewSize(600, 500))
 

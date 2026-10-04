@@ -284,14 +284,14 @@ func config() {
 	conf_file, err := os.Open(*config_path)
 	if err != nil {
 		fmt.Println(fmt.Errorf("Config error: unable to open config file:\n%s", err.Error()))
-		fmt.Println("* Using defaults!")
+		fmt.Println(l10n.X("daemon.using_defaults", "* Using defaults!"))
 		conf_ = []byte(embeddedConfig.Toml)
 	} else {
 		defer conf_file.Close()
 		conf_, err = ioutil.ReadAll(conf_file)
 		if err != nil {
 			fmt.Println(fmt.Errorf("Config error: unable to read config file:\n%s", err.Error()))
-			fmt.Println("* Using defaults!")
+			fmt.Println(l10n.X("daemon.using_defaults", "* Using defaults!"))
 			conf_ = []byte(embeddedConfig.Toml)
 		}
 	}
@@ -344,7 +344,7 @@ func template(str string) string {
 			match := tpl[i]
 			t := str[ (match[0]+1):(match[1]-1) ]
 			if _tpl, ok := Templates[t]; !ok {
-				fmt.Printf("Parse warning: Template definition not found for @%s@. This expression will be used \"as is\".\n", t)
+				fmt.Println(l10n.X("daemon.template_missing", "Parse warning: Template definition not found for @{{.Name}}@. This expression will be used \"as is\".", "Name", t))
 			} else {
 				str = str[ 0:match[0] ] + _tpl + str[ (match[1]) : ]
 			}
@@ -362,7 +362,7 @@ func seqParse(str string, act string) (seq TSequence) {
 	tpl := OFF.FindAllStringIndex(str, -1)
 	if tpl != nil {
 		if len(tpl) > 1 {
-			panic(fmt.Errorf("Parse error: Found more than 1 \"OFF\" declaration for action \"%s\"", act))
+			panic(l10n.Errf("daemon.dup_off_declaration", "Parse error: Found more than 1 \"OFF\" declaration for action \"{{.Action}}\"", "Action", act))
 		} else {
 			match := tpl[0]
 			t := strings.TrimLeft(str[ match[0] :match[1] ], " OFF:")
@@ -371,7 +371,7 @@ func seqParse(str string, act string) (seq TSequence) {
 				fmt.Printf("%s OFF: %s\n", act, t)
 			}
 			if err != nil {
-				panic(fmt.Errorf("Parse error: Invalid regex for OFF: condition of action \"%s\"\n%s", act, err.Error()))
+				panic(l10n.Errf("daemon.off_regex", "Parse error: Invalid regex for OFF: condition of action \"{{.Action}}\"\n{{.Err}}", "Action", act, "Err", err.Error()))
 			}
 		}
 	}
@@ -379,7 +379,7 @@ func seqParse(str string, act string) (seq TSequence) {
 	tpl = ON.FindAllStringIndex(str, -1)
 	if tpl != nil {
 		if len(tpl) > 1 {
-			panic(fmt.Errorf("Parse error: Found more than 1 \"ON\" declaration for action \"%s\"", act))
+			panic(l10n.Errf("daemon.dup_on_declaration", "Parse error: Found more than 1 \"ON\" declaration for action \"{{.Action}}\"", "Action", act))
 		} else {
 			match := tpl[0]
 			t := strings.TrimLeft(str[ match[0] :match[1] ], " ON:")
@@ -388,7 +388,7 @@ func seqParse(str string, act string) (seq TSequence) {
 				fmt.Printf("%s ON: %s\n", act, t)
 			}
 			if err != nil {
-				panic(fmt.Errorf("Parse error: Invalid regex for ON: condition of action \"%s\"\n%s", act, err.Error()))
+				panic(l10n.Errf("daemon.on_regex", "Parse error: Invalid regex for ON: condition of action \"{{.Action}}\"\n{{.Err}}", "Action", act, "Err", err.Error()))
 			}
 		}
 	}
@@ -396,7 +396,7 @@ func seqParse(str string, act string) (seq TSequence) {
 	tpl = SEQ.FindAllStringIndex(str, -1)
 	if tpl != nil {
 		if len(tpl) > 1 {
-			panic(fmt.Errorf("Parse error: Found more than 1 \"SEQ\" declaration for action \"%s\"", act))
+			panic(l10n.Errf("daemon.dup_seq_declaration", "Parse error: Found more than 1 \"SEQ\" declaration for action \"{{.Action}}\"", "Action", act))
 		} else {
 			match := tpl[0]
 			t := strings.TrimLeft(str[ match[0] :match[1] ], " SEQ:")
@@ -405,7 +405,7 @@ func seqParse(str string, act string) (seq TSequence) {
 				fmt.Printf("%s => %s\n", act, t)
 			}
 			if err != nil {
-				panic(fmt.Errorf("Parse error: Invalid regex for SEQ: condition of action \"%s\"\n%s", act, err.Error()))
+				panic(l10n.Errf("daemon.seq_regex", "Parse error: Invalid regex for SEQ: condition of action \"{{.Action}}\"\n{{.Err}}", "Action", act, "Err", err.Error()))
 			}
 		}
 	}
@@ -485,7 +485,7 @@ func sequences() {
 
 	WordChars, err = regexp.Compile(template(Actions.WordChars))
 	if err != nil {
-		panic(fmt.Errorf("Parse error: Invalid regex for Actions.WordChars\n%s", err.Error()))
+		panic(l10n.Errf("daemon.wordchars_regex", "Parse error: Invalid regex for Actions.WordChars\n{{.Err}}", "Err", err.Error()))
 	}
 	if *VERBOSE || *DEBUG {
 		fmt.Printf("WordChars => %s\n", template(Actions.WordChars))
@@ -493,7 +493,7 @@ func sequences() {
 
 	WordHead, err = regexp.Compile(template(Actions.WordHead))
 	if err != nil {
-		panic(fmt.Errorf("Parse error: Invalid regex for Actions.WordHead\n%s", err.Error()))
+		panic(l10n.Errf("daemon.wordhead_regex", "Parse error: Invalid regex for Actions.WordHead\n{{.Err}}", "Err", err.Error()))
 	}
 	if *VERBOSE || *DEBUG {
 		fmt.Printf("WordHead => %s\n", template(Actions.WordHead))
@@ -512,10 +512,10 @@ func parseKeys(keys []string, action func(t_key), name string) {
 				k2 := uint(0)
 				kk := KEY_SPLIT.Split(key, 2)
 				if k1, ok = key_def[ kk[0] ]; !ok {
-					panic(fmt.Sprintf("Parse error: Invalid key for %s: %s", name, key))
+					panic(l10n.X("daemon.invalid_key", "Parse error: Invalid key for {{.Name}}: {{.Key}}", "Name", name, "Key", key))
 				}
 				if k2, ok = key_def[ kk[1] ]; !ok {
-					panic(fmt.Sprintf("Parse error: Invalid key for %s: %s", name, key))
+					panic(l10n.X("daemon.invalid_key", "Parse error: Invalid key for {{.Name}}: {{.Key}}", "Name", name, "Key", key))
 				}
 
 				for k := k1; k <= k2 ; k++ {
@@ -525,7 +525,7 @@ func parseKeys(keys []string, action func(t_key), name string) {
 					}
 				}
 			} else {
-				panic(fmt.Sprintf("Parse error: Invalid key for %s: %s", name, key))
+				panic(l10n.X("daemon.invalid_key", "Parse error: Invalid key for {{.Name}}: {{.Key}}", "Name", name, "Key", key))
 			}
 		}
 	}
@@ -567,7 +567,7 @@ func getActiveWindowId() (idChanged bool) { // _Ctype_Window == uint32
 	focused := ActiveWindowId // Keep the previous value unless X names a real window
 	if C.XGetInputFocus(display, &focused, &revert_to) == 0 {
 		if *VERBOSE {
-			fmt.Println("XGetInputFocus failed")
+			fmt.Println(l10n.X("daemon.xgetinputfocus_failed", "XGetInputFocus failed"))
 		}
 		return false
 	}
@@ -604,7 +604,7 @@ func getActiveWindowId() (idChanged bool) { // _Ctype_Window == uint32
 			}
 		} else {
 			if *DEBUG {
-				fmt.Println("Empty ActiveWindowClass. M.b. gnome \"window\"?")
+				fmt.Println(l10n.X("daemon.empty_window_class", "Empty ActiveWindowClass. M.b. gnome \"window\"?"))
 			}
 		}
 	}
@@ -1062,7 +1062,7 @@ func nextLayout(ref int, layouts []int) int {
 // Single action: drop. Or be smarter and remember the layout inside key sequences...
 func Switch(A *TAction) {
 	if len(A.Layouts) == 0 { // A.Layouts[0] below would panic and the daemon would die on this key
-		fmt.Printf("Switch warning: the action lists no Layouts to cycle through\n")
+		fmt.Println(l10n.X("daemon.switch_no_layouts", "Switch warning: the action lists no Layouts to cycle through"))
 		return
 	}
 
@@ -1092,7 +1092,7 @@ func resolveRunAs(uid, gid string) (uint32, uint32, error) {
 	}
 	u64, err := strconv.ParseUint(user_.Uid, 10, 32)
 	if err != nil {
-		return 0, 0, fmt.Errorf("non-integer uid for user %q: %v", uid, err)
+		return 0, 0, l10n.Errf("daemon.uid_not_integer", "non-integer uid for user \"{{.User}}\": {{.Err}}", "User", uid, "Err", err)
 	}
 
 	gid_ := user_.Gid
@@ -1105,7 +1105,7 @@ func resolveRunAs(uid, gid string) (uint32, uint32, error) {
 	}
 	g64, err := strconv.ParseUint(gid_, 10, 32)
 	if err != nil {
-		return 0, 0, fmt.Errorf("non-integer gid for user %q: %v", uid, err)
+		return 0, 0, l10n.Errf("daemon.gid_not_integer", "non-integer gid for user \"{{.User}}\": {{.Err}}", "User", uid, "Err", err)
 	}
 	return uint32(u64), uint32(g64), nil
 }
@@ -1233,12 +1233,12 @@ func Exec(A *TAction) {
 	var c exec.Command;
 	args, err := shellquote.Split(A.Exec)
 	if err != nil {
-		fmt.Printf("Exec error: %s", err.Error())
+		fmt.Print(l10n.X("daemon.exec_error", "Exec error: {{.Err}}", "Err", err.Error()))
 		return
 	}
 
 	if len(args) == 0 {
-		fmt.Println("Exec error: Empty \"Exec\" value!")
+		fmt.Println(l10n.X("daemon.exec_empty", "Exec error: Empty \"Exec\" value!"))
 		return
 	}
 
@@ -1281,7 +1281,7 @@ func Exec(A *TAction) {
 	// UID & GID: an empty UID keeps (0, 0) so exec runs as the current user (see resolveRunAs).
 	c.UID, c.GID, err = resolveRunAs(A.UID, A.GID)
 	if err != nil {
-		fmt.Printf("Exec: run_as %q/%q invalid: %v\n", A.UID, A.GID, err)
+		fmt.Println(l10n.X("daemon.run_as_invalid", "Exec: run_as \"{{.UID}}\"/\"{{.GID}}\" invalid: {{.Err}}", "UID", A.UID, "GID", A.GID, "Err", err))
 		return
 	}
 
@@ -1394,7 +1394,7 @@ func doAction(name *string) { // name of ActionSet
 			doAction(&name)
 		} else {
 			if _, ok = ACTIONS[act]; !ok {
-				fmt.Printf("WTF! No such action \"%s\"", act)
+				fmt.Print(l10n.X("daemon.no_such_action", "WTF! No such action \"{{.Action}}\"", "Action", act))
 				return
 			}
 			if *DEBUG {
@@ -1589,7 +1589,7 @@ func events(device *evdev.InputDevice) {
 func connectEvents(connectPath string) {
 	devicePaths, err := evdev.ListDevicePaths()
 	if err != nil {
-		panic(fmt.Sprintf("Events error: Unable to list devices: %s", err))
+		panic(l10n.X("daemon.list_devices_failed", "Events error: Unable to list devices: {{.Err}}", "Err", err))
 //		return
 	}
 	for _, dev := range devicePaths {
@@ -1598,7 +1598,7 @@ func connectEvents(connectPath string) {
 		}
 		if dev.Name == keybd_event.DeviceName { // Own output would be read back as input
 			if *VERBOSE {
-				fmt.Printf("- %s:\t%s (own virtual keyboard)\n", dev.Path, dev.Name)
+				fmt.Printf("- %s:\t%s %s\n", dev.Path, dev.Name, l10n.X("daemon.device_own_keyboard", "(own virtual keyboard)"))
 			}
 			continue
 		}
@@ -1607,7 +1607,7 @@ func connectEvents(connectPath string) {
 		attachedMu.Unlock()
 		if reading { // A reader for this path is already running
 			if *VERBOSE {
-				fmt.Printf("- %s:\t%s (already attached)\n", dev.Path, dev.Name)
+				fmt.Printf("- %s:\t%s %s\n", dev.Path, dev.Name, l10n.X("daemon.device_already_attached", "(already attached)"))
 			}
 			continue
 		}
@@ -1615,7 +1615,7 @@ func connectEvents(connectPath string) {
 		d, err := evdev.Open(dev.Path)
 		if err != nil {
 			fmt.Printf("? %s:\t%s\n", dev.Path, dev.Name)
-			fmt.Printf("Cannot read %s: %v\n", dev.Path, err)
+			fmt.Println(l10n.X("daemon.device_open_failed", "Cannot read {{.Path}}: {{.Err}}", "Path", dev.Path, "Err", err))
 			continue
 		}
 		if ScanDevices.BypassRE.MatchString(dev.Name) {
@@ -1697,7 +1697,7 @@ func forkChild() (*os.Process, error) {
 func Respawn(*TAction) { // Completelly respawn xswitcher.
 	p, err := forkChild()
 	if err != nil {
-		fmt.Printf("Respawn skipped: %v.\n", err)
+		fmt.Println(l10n.X("daemon.respawn_skipped", "Respawn skipped: {{.Err}}.", "Err", err))
 		return
 	}
 	// A forked process is not a running one. Everything the parser cannot see -- the
@@ -1705,10 +1705,10 @@ func Respawn(*TAction) { // Completelly respawn xswitcher.
 	// -- kills the child afterwards, and this process IS the keyboard: it may only let go
 	// once the child has taken the socket. See handover.go.
 	if err := handover(p); err != nil {
-		fmt.Printf("Respawn skipped: %v.\n", err)
+		fmt.Println(l10n.X("daemon.respawn_skipped", "Respawn skipped: {{.Err}}.", "Err", err))
 		return
 	}
-	fmt.Printf("Forked child %v.\n", p.Pid)
+	fmt.Println(l10n.X("daemon.forked_child", "Forked child {{.PID}}.", "PID", p.Pid))
 	os.Exit(0)
 }
 
@@ -1878,7 +1878,7 @@ func clipboardText() (string, bool) { // The clipboard's text, or false if it is
 	// The content itself is never printed: it is whatever the user last copied.
 	if ! clipboardOk {
 		if err := clipboard.Init(); err != nil {
-			fmt.Printf("Unable to read from the clipboard: %v.\n", err)
+			fmt.Println(l10n.X("daemon.clipboard_unreadable", "Unable to read from the clipboard: {{.Err}}.", "Err", err))
 			return "", false
 		}
 		clipboardOk = true
@@ -1899,7 +1899,7 @@ func serve() {
 
 	stat, err := os.Stat(ScanDevices.Test)
 	if err != nil {
-		panic(fmt.Sprintf("Device test error: Unable to stat device: %s", err))
+		panic(l10n.X("daemon.device_stat_failed", "Device test error: Unable to stat device: {{.Err}}", "Err", err))
 	}
 	now := time.Now()
 
@@ -1913,7 +1913,7 @@ func serve() {
 
 	display = C.XOpenDisplay(nil);
 	if display == nil {
-		panic("Error while XOpenDisplay()!")
+		panic(l10n.X("daemon.xopen_display_failed", "Error while XOpenDisplay()!"))
 	}
 	// Set callback https://stackoverflow.com/questions/32947511/cgo-cant-set-callback-in-c-struct-from-go
 	C.set_handle_error()
@@ -1933,7 +1933,7 @@ func serve() {
 			}
 		case event = <- keyboardEvents:
 			if event.code > 767 { // Upper bound of key_name[]; the field is uint16, so `code < 0` was always false.
-				fmt.Printf("!!! Invalid event code: %d\n", event.code);
+				fmt.Println(l10n.X("daemon.invalid_event_code", "!!! Invalid event code: {{.Code}}", "Code", event.code));
 			} else {
 				if *TEST_MODE {
 					fmt.Fprintf(os.Stderr, ",%s:%d", key_name[event.code], event.value)
@@ -1990,13 +1990,13 @@ func main() {
 	// Attach virtual keyboard
 	kb, err = keybd_event.NewKeyBonding()
 	if err != nil {
-		panic(fmt.Sprintf("Virtual keyboard error: %s", err))
+		panic(l10n.X("daemon.virtual_keyboard_failed", "Virtual keyboard error: {{.Err}}", "Err", err))
 	}
 
 	// Create new inotify watcher.
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		panic(fmt.Sprintf("Inotify error in NewWatcher(): %s", err))
+		panic(l10n.X("daemon.inotify_watcher_failed", "Inotify error in NewWatcher(): {{.Err}}", "Err", err))
 	}
 	defer watcher.Close()
 
@@ -2018,7 +2018,7 @@ func main() {
 					fmt.Printf("***WTF***: read(watcher.Errors) != ok\n")
 					continue
 				}
-				fmt.Printf("watcher error: %v\n", err)
+				fmt.Println(l10n.X("daemon.watcher_error", "watcher error: {{.Err}}", "Err", err))
 			}
 		}
 	}()
@@ -2026,7 +2026,7 @@ func main() {
 	// inotify on "/dev/input"
 	err = watcher.Add("/dev/input")
 	if err != nil {
-		panic(fmt.Sprintf("Inotify error in Add(\"/dev/input\"): %s", err))
+		panic(l10n.X("daemon.inotify_add_failed", "Inotify error in Add(\"/dev/input\"): {{.Err}}", "Err", err))
 	}
 
 	serve() // Main loop

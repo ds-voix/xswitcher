@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"xswitcher/internal/l10n"
 )
 
 const (
@@ -119,17 +120,17 @@ func (s *Server) Start() error {
 	defer s.mu.Unlock()
 
 	if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("ipc: remove stale socket: %w", err)
+		return l10n.Errf("ipc.remove_stale_socket", "ipc: remove stale socket: {{.Err}}", "Err", err)
 	}
 
 	ln, err := net.Listen("unix", s.path)
 	if err != nil {
-		return fmt.Errorf("ipc: listen: %w", err)
+		return l10n.Errf("ipc.listen", "ipc: listen: {{.Err}}", "Err", err)
 	}
 
 	if err := os.Chmod(s.path, socketPerm); err != nil {
 		ln.Close()
-		return fmt.Errorf("ipc: chmod socket: %w", err)
+		return l10n.Errf("ipc.chmod_socket", "ipc: chmod socket: {{.Err}}", "Err", err)
 	}
 
 	s.listener = ln
