@@ -29,39 +29,13 @@ func newAboutPanel(onLanguage func(code string) string) fyne.CanvasObject {
 		l.Alignment = fyne.TextAlignCenter
 	}
 
-	languages := l10n.Available()
-	labels := make([]string, 0, len(languages))
-	codeByLabel := make(map[string]string, len(languages))
-	labelByCode := make(map[string]string, len(languages))
-	for _, d := range languages {
-		label := d.Name
-		if d.Name != d.English {
-			label = fmt.Sprintf("%s (%s)", d.Name, d.English)
-		}
-		labels = append(labels, label)
-		codeByLabel[label] = d.Code
-		labelByCode[d.Code] = label
-	}
-
 	feedback := widget.NewLabel("")
 	feedback.Alignment = fyne.TextAlignCenter
-
-	current := l10n.Current()
-	picker := widget.NewSelect(labels, func(chosen string) {
-		code, ok := codeByLabel[chosen]
-		if !ok {
-			return
-		}
-		feedback.SetText(onLanguage(code))
-	})
-	if label, ok := labelByCode[current]; ok {
-		picker.SetSelected(label)
-	}
 
 	languageCard := widget.NewCard(
 		l10n.X("about.language_card", "Language"),
 		l10n.X("about.language_note", "Applies to this window at once. Fyne's own buttons (OK, Cancel, and the rest) follow the process locale."),
-		container.NewVBox(picker, feedback),
+		container.NewVBox(newLanguagePicker(onLanguage, feedback.SetText), feedback),
 	)
 
 	return container.NewVBox(
@@ -76,4 +50,46 @@ func newAboutPanel(onLanguage func(code string) string) fyne.CanvasObject {
 		widget.NewSeparator(),
 		languageCard,
 	)
+}
+
+// newLanguagePicker builds the dropdown over the catalogues l10n can speak.
+// The callback goes on only after SetSelected has restored the active code,
+// because Fyne fires OnChanged from SetSelected: a panel that reached onLanguage
+// while being built would call setLanguage, which rebuilds the window, which
+// builds this panel again -- the recursion that left the GUI without a window.
+func newLanguagePicker(onLanguage func(code string) string, showFeedback func(string)) *widget.Select {
+	languages := l10n.Available()
+	labels := make([]string, 0, len(languages))
+	codeByLabel := make(map[string]string, len(languages))
+	labelByCode := make(map[string]string, len(languages))
+	for _, d := range languages {
+		label := languageLabel(d)
+		labels = append(labels, label)
+		codeByLabel[label] = d.Code
+		labelByCode[d.Code] = label
+	}
+
+	picker := widget.NewSelect(labels, nil)
+	if label, ok := labelByCode[l10n.Current()]; ok {
+		picker.SetSelected(label)
+	}
+	picker.OnChanged = func(chosen string) {
+		code, ok := codeByLabel[chosen]
+		// Re-choosing the language that is already active is not a choice: the
+		// rebuild it would trigger only throws away the edits of other tabs.
+		if !ok || code == l10n.Current() {
+			return
+		}
+		showFeedback(onLanguage(code))
+	}
+	return picker
+}
+
+// languageLabel is the caption a catalogue gets in the picker: its native name,
+// with the English name appended when the two differ.
+func languageLabel(d l10n.Descriptor) string {
+	if d.Name == d.English {
+		return d.Name
+	}
+	return fmt.Sprintf("%s (%s)", d.Name, d.English)
 }
