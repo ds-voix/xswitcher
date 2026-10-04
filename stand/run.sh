@@ -12,6 +12,10 @@
 set -u
 cd /w
 
+# Pin the daemon's message locale: the phases grep English log and IPC texts, and
+# those strings are localized now, so a Russian environment must not reach them.
+export LC_ALL=C XSWITCHER_LANG=en
+
 LOG=/tmp/xswitcher.log
 CONF=/tmp/stand.conf
 TSV=/tmp/keybd.tsv

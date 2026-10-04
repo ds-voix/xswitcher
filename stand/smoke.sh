@@ -13,6 +13,12 @@
 set -u
 cd /w
 
+# The checks below grep the daemon's IPC error texts, and those are localized
+# ("kept as is" is one of them), so the message locale is pinned to English no
+# matter what the container's environment says. The fixtures never set [GUI]
+# Language, which would otherwise override XSWITCHER_LANG.
+export LC_ALL=C XSWITCHER_LANG=en
+
 CONF=/tmp/GuiSmoke.conf
 SOCK=/tmp/gui.sock
 LOG=/tmp/smoke-daemon.log
