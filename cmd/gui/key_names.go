@@ -17,6 +17,9 @@ package main
 import (
 	"fmt"
 	"strings"
+	"sync/atomic"
+
+	"xswitcher/internal/l10n"
 )
 
 // keyTriggerOption is one dropdown entry: the canonical daemon name and the
@@ -26,13 +29,19 @@ type keyTriggerOption struct {
 	display string
 }
 
-var keyTriggerList = buildKeyTriggerList()
+// keyNameTable is the catalogue for one locale, indexed both ways.
+type keyNameTable struct {
+	code          string
+	options       []keyTriggerOption
+	displayByReal map[string]string
+	realByDisplay map[string]string
+}
 
-// displayByReal/realByDisplay index the curated list both ways.
-var (
-	keyDisplayByReal = map[string]string{}
-	keyRealByDisplay = map[string]string{}
-)
+// keyNames holds the table for the locale it was built under. Package init runs
+// before main() calls l10n.Init(), so a list built once would be frozen in
+// English and the Hotkeys dropdown would stay English in a Russian window; the
+// table is rebuilt whenever the active locale differs from the cached one.
+var keyNames atomic.Pointer[keyNameTable]
 
 func buildKeyTriggerList() []keyTriggerOption {
 	var out []keyTriggerOption
@@ -50,50 +59,64 @@ func buildKeyTriggerList() []keyTriggerOption {
 	// Canonical punctuation spellings from key_def; the single-character
 	// aliases (MINUS, ";", "[", ...) are added to key_def only at daemon run
 	// time by keys(), so the GUI names these by their canonical token.
-	add("-", "Hyphen")
-	add("=", "Equals")
-	add("SEMICOLON", "Semicolon")
-	add("APOSTROPHE", "Apostrophe")
-	add("GRAVE", "Grave")
-	add("BACKSLASH", "Backslash")
-	add("COMMA", "Comma")
-	add("DOT", "Dot")
-	add("SLASH", "Slash")
-	add("L_BRACE", "Left bracket")
-	add("R_BRACE", "Right bracket")
-	add("TAB", "Tab")
-	add("ENTER", "Enter")
-	add("BACKSPACE", "Backspace")
-	add("SPACE", "Space")
-	add("ESC", "Escape")
-	add("UP", "Up")
-	add("DOWN", "Down")
-	add("LEFT", "Left")
-	add("RIGHT", "Right")
-	add("HOME", "Home")
-	add("END", "End")
-	add("INSERT", "Insert")
-	add("DELETE", "Delete")
-	add("PAGEUP", "Page up")
-	add("PAGEDOWN", "Page down")
+	add("-", l10n.X("keyname.hyphen", "Hyphen"))
+	add("=", l10n.X("keyname.equals", "Equals"))
+	add("SEMICOLON", l10n.X("keyname.semicolon", "Semicolon"))
+	add("APOSTROPHE", l10n.X("keyname.apostrophe", "Apostrophe"))
+	add("GRAVE", l10n.X("keyname.grave", "Grave"))
+	add("BACKSLASH", l10n.X("keyname.backslash", "Backslash"))
+	add("COMMA", l10n.X("keyname.comma", "Comma"))
+	add("DOT", l10n.X("keyname.dot", "Dot"))
+	add("SLASH", l10n.X("keyname.slash", "Slash"))
+	add("L_BRACE", l10n.X("keyname.left.bracket", "Left bracket"))
+	add("R_BRACE", l10n.X("keyname.right.bracket", "Right bracket"))
+	add("TAB", l10n.X("keyname.tab", "Tab"))
+	add("ENTER", l10n.X("keyname.enter", "Enter"))
+	add("BACKSPACE", l10n.X("keyname.backspace", "Backspace"))
+	add("SPACE", l10n.X("keyname.space", "Space"))
+	add("ESC", l10n.X("keyname.escape", "Escape"))
+	add("UP", l10n.X("keyname.up", "Up"))
+	add("DOWN", l10n.X("keyname.down", "Down"))
+	add("LEFT", l10n.X("keyname.left", "Left"))
+	add("RIGHT", l10n.X("keyname.right", "Right"))
+	add("HOME", l10n.X("keyname.home", "Home"))
+	add("END", l10n.X("keyname.end", "End"))
+	add("INSERT", l10n.X("keyname.insert", "Insert"))
+	add("DELETE", l10n.X("keyname.delete", "Delete"))
+	add("PAGEUP", l10n.X("keyname.page.up", "Page up"))
+	add("PAGEDOWN", l10n.X("keyname.page.down", "Page down"))
 	for i := 1; i <= 24; i++ {
 		f := fmt.Sprintf("F%d", i)
-		add(f, f)
+		add(f, l10n.X("keyname.fn", "F{{.N}}", "N", i))
 	}
 	return out
 }
 
-func init() {
-	for _, o := range keyTriggerList {
-		keyDisplayByReal[o.real] = o.display
-		keyRealByDisplay[o.display] = o.real
+func keyTable() *keyNameTable {
+	code := l10n.Current()
+	if t := keyNames.Load(); t != nil && t.code == code {
+		return t
 	}
+	options := buildKeyTriggerList()
+	t := &keyNameTable{
+		code:          code,
+		options:       options,
+		displayByReal: map[string]string{},
+		realByDisplay: map[string]string{},
+	}
+	for _, o := range options {
+		t.displayByReal[o.real] = o.display
+		t.realByDisplay[o.display] = o.real
+	}
+	keyNames.Store(t)
+	return t
 }
 
 // keyTriggerOptions returns the dropdown labels in catalogue order.
 func keyTriggerOptions() []string {
-	opts := make([]string, 0, len(keyTriggerList))
-	for _, o := range keyTriggerList {
+	options := keyTable().options
+	opts := make([]string, 0, len(options))
+	for _, o := range options {
 		opts = append(opts, o.display)
 	}
 	return opts
@@ -103,17 +126,17 @@ func keyTriggerOptions() []string {
 // curated list (only reachable when loading a hand-written config) still shows
 // as "NAME (NAME)" so the stored value survives an open/save round trip.
 func keyLabelFor(real string) string {
-	if d, ok := keyDisplayByReal[real]; ok {
+	if d, ok := keyTable().displayByReal[real]; ok {
 		return d
 	}
-	return real + " (" + real + ")"
+	return l10n.X("keyname.label.unknown", "{{.Name}} ({{.Name}})", "Name", real)
 }
 
 // keyRealFor turns a dropdown label back into the canonical daemon name: the
 // curated lookup first, then the text inside the trailing parentheses, then the
 // whole string upper-cased as a last resort.
 func keyRealFor(display string) string {
-	if r, ok := keyRealByDisplay[display]; ok {
+	if r, ok := keyTable().realByDisplay[display]; ok {
 		return r
 	}
 	if open := strings.LastIndexByte(display, '('); open >= 0 && strings.HasSuffix(display, ")") {
@@ -126,6 +149,6 @@ func keyRealFor(display string) string {
 
 // keyHasReal reports whether the canonical name is in the curated catalogue.
 func keyHasReal(real string) bool {
-	_, ok := keyDisplayByReal[real]
+	_, ok := keyTable().displayByReal[real]
 	return ok
 }

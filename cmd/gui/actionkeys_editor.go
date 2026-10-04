@@ -4,12 +4,13 @@
 package main
 
 import (
-	"fmt"
 	"strconv"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
+
+	"xswitcher/internal/l10n"
 )
 
 type actionKeysEditor struct {
@@ -22,14 +23,15 @@ var akListKeys = []string{"Add", "Drop", "Test", "StateKeys"}
 func newActionKeysEditor() (fyne.CanvasObject, *actionKeysEditor) {
 	e := &actionKeysEditor{layouts: widget.NewEntry()}
 	e.layouts.SetPlaceHolder("0,1")
-	rows := []*widget.FormItem{widget.NewFormItem("Layouts", e.layouts)}
+	rows := []*widget.FormItem{widget.NewFormItem(configKeyLabel("Layouts"), e.layouts)}
 	for i, key := range akListKeys {
 		e.lists[i] = widget.NewMultiLineEntry()
-		e.lists[i].SetPlaceHolder(fmt.Sprintf("%s key patterns, one per line", key))
-		rows = append(rows, widget.NewFormItem(key, e.lists[i]))
+		e.lists[i].SetPlaceHolder(l10n.X("actionkeys.placeholder.patterns", "{{.Name}} key patterns, one per line", "Name", key))
+		rows = append(rows, widget.NewFormItem(configKeyLabel(key), e.lists[i]))
 	}
 	form := widget.NewForm(rows...)
-	return container.NewVScroll(widget.NewCard("ActionKeys", "Keys that trigger switching and word actions (one pattern per line)", form)), e
+	subtitle := l10n.X("actionkeys.card.subtitle", "Keys that trigger switching and word actions (one pattern per line)")
+	return container.NewVScroll(widget.NewCard(l10n.X("actionkeys.card.title", "ActionKeys"), subtitle, form)), e
 }
 
 func (e *actionKeysEditor) load(data map[string]any) {

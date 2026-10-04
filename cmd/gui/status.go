@@ -13,6 +13,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"xswitcher/internal/ipc"
+	"xswitcher/internal/l10n"
 )
 
 type statusPanel struct {
@@ -37,19 +38,19 @@ func newStatusPanel(client *ipc.Client) (fyne.CanvasObject, func()) {
 	p.statusLabel = widget.NewLabel("")
 
 	form := widget.NewForm(
-		widget.NewFormItem("PID", p.pidLabel),
-		widget.NewFormItem("Uptime", p.uptimeLabel),
-		widget.NewFormItem("Config", p.configLabel),
-		widget.NewFormItem("Layout", p.layoutLabel),
-		widget.NewFormItem("Active window", p.windowLabel),
-		widget.NewFormItem("Word buffer", p.wordLabel),
-		widget.NewFormItem("Devices", p.devicesLabel),
+		widget.NewFormItem(l10n.X("status.field.pid", "PID"), p.pidLabel),
+		widget.NewFormItem(l10n.X("status.field.uptime", "Uptime"), p.uptimeLabel),
+		widget.NewFormItem(l10n.X("status.field.config", "Config"), p.configLabel),
+		widget.NewFormItem(l10n.X("status.field.layout", "Layout"), p.layoutLabel),
+		widget.NewFormItem(l10n.X("status.field.active_window", "Active window"), p.windowLabel),
+		widget.NewFormItem(l10n.X("status.field.word_buffer", "Word buffer"), p.wordLabel),
+		widget.NewFormItem(l10n.X("status.field.devices", "Devices"), p.devicesLabel),
 	)
 
-	refreshBtn := widget.NewButton("Refresh", p.refresh)
+	refreshBtn := widget.NewButton(l10n.X("status.btn.refresh", "Refresh"), p.refresh)
 
 	panel := container.NewVScroll(container.NewVBox(
-		widget.NewCard("Daemon status", "", form),
+		widget.NewCard(l10n.X("status.card.daemon_status", "Daemon status"), "", form),
 		container.NewHBox(refreshBtn),
 		p.statusLabel,
 	))
@@ -60,11 +61,11 @@ func newStatusPanel(client *ipc.Client) (fyne.CanvasObject, func()) {
 func (p *statusPanel) refresh() {
 	resp, err := p.client.Status()
 	if err != nil {
-		p.statusLabel.SetText(fmt.Sprintf("Status failed: %v", err))
+		p.statusLabel.SetText(l10n.X("status.failed_v", "Status failed: {{.Err}}", "Err", err))
 		return
 	}
 	if !resp.Ok {
-		p.statusLabel.SetText(fmt.Sprintf("Status failed: %s", resp.Error))
+		p.statusLabel.SetText(l10n.X("status.failed_s", "Status failed: {{.Error}}", "Error", resp.Error))
 		return
 	}
 	p.pidLabel.SetText(fmt.Sprintf("%d", resp.PID))
@@ -76,5 +77,5 @@ func (p *statusPanel) refresh() {
 	// is never logged.
 	p.wordLabel.SetText(resp.WordBuffer)
 	p.devicesLabel.SetText(strings.Join(resp.Devices, "\n"))
-	p.statusLabel.SetText("Status refreshed")
+	p.statusLabel.SetText(l10n.X("status.refreshed", "Status refreshed"))
 }

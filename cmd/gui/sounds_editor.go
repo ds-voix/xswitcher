@@ -19,6 +19,7 @@ import (
 
 	cfg "xswitcher/internal/config"
 	"xswitcher/internal/ipc"
+	"xswitcher/internal/l10n"
 	"xswitcher/internal/sounds"
 )
 
@@ -66,14 +67,14 @@ func newSoundsEditor(player *sounds.Player) (fyne.CanvasObject, *soundsEditor) {
 	sort.Strings(events)
 
 	box := container.NewVBox(widget.NewLabel(
-		"Sound files are played by the GUI process; leave a row empty for silence."))
+		l10n.X("sounds.description", "Sound files are played by the GUI process; leave a row empty for silence.")))
 	for _, ev := range events {
 		entry := widget.NewEntry()
 		entry.SetPlaceHolder("/usr/share/sounds/" + ev + ".wav")
 		e.rows[ev] = entry
 		card := widget.NewCard("", ev, container.NewBorder(nil, nil, nil,
-			widget.NewButton("Play", func() { player.Play(entry.Text) }),
-			container.NewHBox(widget.NewLabel("file"), container.NewGridWrap(
+			widget.NewButton(l10n.X("sounds.btn.play", "Play"), func() { player.Play(entry.Text) }),
+			container.NewHBox(widget.NewLabel(l10n.X("sounds.label.file", "file")), container.NewGridWrap(
 				fyne.NewSize(400, 36), entry)),
 		))
 		box.Add(card)

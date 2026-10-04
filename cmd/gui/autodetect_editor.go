@@ -20,6 +20,7 @@ import (
 	"xswitcher/internal/autodetect"
 	cfg "xswitcher/internal/config"
 	"xswitcher/internal/ipc"
+	"xswitcher/internal/l10n"
 )
 
 type autodetectEditor struct {
@@ -35,7 +36,7 @@ type autodetectEditor struct {
 
 func newAutodetectEditor(client *ipc.Client) (fyne.CanvasObject, *autodetectEditor) {
 	e := &autodetectEditor{client: client}
-	e.enabled = widget.NewCheck("Retype a word that was finished in the wrong layout", nil)
+	e.enabled = widget.NewCheck(l10n.X("autodetect.enabled_label", "Retype a word that was finished in the wrong layout"), nil)
 	e.minChars = widget.NewEntry()
 	e.minChars.SetPlaceHolder("5")
 	e.conf = widget.NewEntry()
@@ -47,9 +48,9 @@ func newAutodetectEditor(client *ipc.Client) (fyne.CanvasObject, *autodetectEdit
 
 	form := widget.NewForm(
 		widget.NewFormItem("", e.enabled),
-		widget.NewFormItem("MinChars", e.minChars),
-		widget.NewFormItem("Confidence", e.conf),
-		widget.NewFormItem("Languages", e.languages),
+		widget.NewFormItem(configKeyLabel("MinChars"), e.minChars),
+		widget.NewFormItem(configKeyLabel("Confidence"), e.conf),
+		widget.NewFormItem(configKeyLabel("Languages"), e.languages),
 	)
 
 	codes := make([]string, 0, len(cfg.AutoDetectLanguages))
@@ -57,11 +58,9 @@ func newAutodetectEditor(client *ipc.Client) (fyne.CanvasObject, *autodetectEdit
 		codes = append(codes, code)
 	}
 	sort.Strings(codes)
-	hint := widget.NewLabel(fmt.Sprintf(
-		"Languages holds one entry per line as \"<group>:<language>\", where group is the 0-based "+
-			"XKB group to switch to and language is one of: %s. MinChars is the shortest run of "+
-			"letters worth judging and Confidence the margin between the two best readings the "+
-			"daemon must see before it touches the keyboard.", strings.Join(codes, ", ")))
+	hint := widget.NewLabel(l10n.X("autodetect.languages_hint",
+		`Languages holds one entry per line as "<group>:<language>", where group is the 0-based XKB group to switch to and language is one of: {{.Value}}. MinChars is the shortest run of letters worth judging and Confidence the margin between the two best readings the daemon must see before it touches the keyboard.`,
+		"Value", strings.Join(codes, ", ")))
 	hint.Wrapping = fyne.TextWrapWord
 
 	// The preview asks the daemon for the buffer it is holding now and scores the
@@ -70,19 +69,16 @@ func newAutodetectEditor(client *ipc.Client) (fyne.CanvasObject, *autodetectEdit
 	e.preview = widget.NewMultiLineEntry()
 	e.preview.Wrapping = fyne.TextWrapWord
 	e.preview.Disable()
-	e.previewBtn = widget.NewButton("Preview current buffer", e.previewNow)
-	previewHint := widget.NewLabel("The daemon judges a word when it is completed; the preview judges the " +
-		"whole buffer as it stands, so a buffer that already holds the first keys of the next word is " +
-		"scored one word longer here. The daemon also refuses a word while a compose sequence is in " +
-		"progress and skips the one word right after a layout you switched by hand; neither state is in " +
-		"the status, so the preview cannot show those refusals.")
+	e.previewBtn = widget.NewButton(l10n.X("autodetect.preview_button", "Preview current buffer"), e.previewNow)
+	previewHint := widget.NewLabel(l10n.X("autodetect.preview_hint",
+		"The daemon judges a word when it is completed; the preview judges the whole buffer as it stands, so a buffer that already holds the first keys of the next word is scored one word longer here. The daemon also refuses a word while a compose sequence is in progress and skips the one word right after a layout you switched by hand; neither state is in the status, so the preview cannot show those refusals."))
 	previewHint.Wrapping = fyne.TextWrapWord
 
 	return container.NewVScroll(container.NewVBox(
-		widget.NewCard("[AutoDetect] settings", "", form),
+		widget.NewCard(l10n.X("autodetect.settings_card", "[AutoDetect] settings"), "", form),
 		hint,
 		e.note,
-		widget.NewCard("Preview", "", container.NewVBox(e.previewBtn, previewHint, e.preview)),
+		widget.NewCard(l10n.X("autodetect.preview_card", "Preview"), "", container.NewVBox(e.previewBtn, previewHint, e.preview)),
 	)), e
 }
 
@@ -99,9 +95,8 @@ func (e *autodetectEditor) load(data map[string]any) {
 
 	e.note.SetText("")
 	if mapBool(section(data, "Wayland"), "BypassX") {
-		e.note.SetText("[Wayland] BypassX is on: the daemon cannot see a layout change it did not " +
-			"make itself, so the parser refuses Enabled = true while that flag stays on. Clear it " +
-			"on the Basics tab first.")
+		e.note.SetText(l10n.X("autodetect.bypassx_note",
+			"[Wayland] BypassX is on: the daemon cannot see a layout change it did not make itself, so the parser refuses Enabled = true while that flag stays on. Clear it on the Basics tab first."))
 	}
 }
 
@@ -192,8 +187,9 @@ type previewInput struct {
 // after a hand-driven switch) are not states the status publishes.
 func previewReport(in previewInput) string {
 	if len(in.Readings) < 2 {
-		return fmt.Sprintf("Buffer: %q\n\nThe daemon sent no readings: [AutoDetect] is switched off in the "+
-			"running config or names one language. Enable it, Apply, then preview again.", in.Buffer)
+		return l10n.X("autodetect.no_readings",
+			"Buffer: \"{{.Buffer}}\"\n\nThe daemon sent no readings: [AutoDetect] is switched off in the running config or names one language. Enable it, Apply, then preview again.",
+			"Buffer", in.Buffer)
 	}
 
 	// Letters are counted over the buffer the daemon renders, which is the same
@@ -207,7 +203,7 @@ func previewReport(in previewInput) string {
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "Buffer: %q (%d letters)\n", in.Buffer, letters)
+	fmt.Fprintf(&b, "%s\n", l10n.X("preview.letters", `Buffer: "{{.Buffer}}" ({{.Len}} letters)`, "Buffer", in.Buffer, "Len", letters))
 	codes := make([]string, 0, len(in.Readings))
 	for code := range in.Readings {
 		codes = append(codes, code)
@@ -221,37 +217,54 @@ func previewReport(in previewInput) string {
 	// list does not name has no declared script to be read in, so nothing is ever
 	// scored, whatever the readings look like.
 	if !namesGroup(in.Groups, in.WordGroup) {
-		fmt.Fprintf(&b, "Would NOT be corrected: the word was typed in group %d, which Languages does not name.\n",
-			in.WordGroup)
+		fmt.Fprintf(&b, "%s\n", l10n.X("autodetect.not_corrected_group",
+			"Would NOT be corrected: the word was typed in group {{.N}}, which Languages does not name.",
+			"N", in.WordGroup))
 		return b.String()
 	}
 
 	// Length is the brake the daemon applies before it asks the model anything, so
 	// a run too short to judge never reports a winner here either.
 	if letters < in.MinChars {
-		fmt.Fprintf(&b, "Would NOT be corrected: %d letters is below MinChars %d.\n", letters, in.MinChars)
+		fmt.Fprintf(&b, "%s\n", l10n.X("autodetect.not_corrected_min_chars",
+			"Would NOT be corrected: {{.Count}} letters is below MinChars {{.MinChars}}.",
+			"Count", letters, "MinChars", in.MinChars))
 		return b.String()
 	}
 
 	lang, confidence, ok := autodetect.Best(in.Readings)
 	if !ok {
-		b.WriteString("No verdict: this run fits neither reading, so the daemon leaves it alone.\n")
+		b.WriteString(l10n.X("autodetect.no_verdict",
+			"No verdict: this run fits neither reading, so the daemon leaves it alone.") + "\n")
 		return b.String()
 	}
-	fmt.Fprintf(&b, "Best reading: %s at confidence %.3f (threshold %.3f, MinChars %d)\n",
-		lang, confidence, in.Threshold, in.MinChars)
+	fmt.Fprintf(&b, "%s\n", l10n.X("autodetect.best_reading",
+		"Best reading: {{.Layout}} at confidence {{.Confidence}} (threshold {{.Threshold}}, MinChars {{.MinChars}})",
+		"Layout", lang,
+		"Confidence", fmt.Sprintf("%.3f", confidence),
+		"Threshold", fmt.Sprintf("%.3f", in.Threshold),
+		"MinChars", in.MinChars))
 	if confidence < in.Threshold {
-		fmt.Fprintf(&b, "Would NOT be corrected: %.3f is below Confidence %.3f.\n", confidence, in.Threshold)
+		fmt.Fprintf(&b, "%s\n", l10n.X("autodetect.not_corrected_confidence",
+			"Would NOT be corrected: {{.Confidence}} is below Confidence {{.Threshold}}.",
+			"Confidence", fmt.Sprintf("%.3f", confidence),
+			"Threshold", fmt.Sprintf("%.3f", in.Threshold)))
 		return b.String()
 	}
 	group, named := in.Groups[lang]
 	switch {
 	case !named:
-		fmt.Fprintf(&b, "The form names no group for %s: add it to Languages before applying.\n", lang)
+		fmt.Fprintf(&b, "%s\n", l10n.X("autodetect.no_group_named",
+			"The form names no group for {{.Layout}}: add it to Languages before applying.",
+			"Layout", lang))
 	case group == in.WordGroup:
-		fmt.Fprintf(&b, "Nothing to do: the winning group %d is already the group the word was typed in.\n", group)
+		fmt.Fprintf(&b, "%s\n", l10n.X("autodetect.nothing_to_do",
+			"Nothing to do: the winning group {{.N}} is already the group the word was typed in.",
+			"N", group))
 	default:
-		fmt.Fprintf(&b, "WOULD be corrected to %s: group %d instead of %d.\n", lang, group, in.WordGroup)
+		fmt.Fprintf(&b, "%s\n", l10n.X("autodetect.would_correct",
+			"WOULD be corrected to {{.Layout}}: group {{.Group}} instead of {{.WordGroup}}.",
+			"Layout", lang, "Group", group, "WordGroup", in.WordGroup))
 	}
 	return b.String()
 }
@@ -277,7 +290,7 @@ func namesGroup(groups map[string]int, want int) bool {
 func (e *autodetectEditor) previewNow() {
 	resp, err := e.client.Status()
 	if err != nil {
-		e.show("Status failed: " + err.Error())
+		e.show(l10n.X("autodetect.status_failed", "Status failed: {{.Err}}", "Err", err.Error()))
 		return
 	}
 	minChars, threshold := e.thresholds()

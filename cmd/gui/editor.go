@@ -17,6 +17,7 @@ import (
 	"github.com/pelletier/go-toml"
 
 	"xswitcher/internal/ipc"
+	"xswitcher/internal/l10n"
 )
 
 // configPanel bundles the editor widgets with their load/apply logic.
@@ -63,44 +64,44 @@ func newEditorPanel(client *ipc.Client, router *soundRouter) (fyne.CanvasObject,
 	p.respawnEntry.SetPlaceHolder("30")
 
 	scanDevicesForm := widget.NewForm(
-		widget.NewFormItem("Test", p.testEntry),
-		widget.NewFormItem("Search", p.searchEntry),
-		widget.NewFormItem("Bypass", p.bypassEntry),
-		widget.NewFormItem("Respawn", p.respawnEntry),
+		widget.NewFormItem(configKeyLabel("Test"), p.testEntry),
+		widget.NewFormItem(configKeyLabel("Search"), p.searchEntry),
+		widget.NewFormItem(configKeyLabel("Bypass"), p.bypassEntry),
+		widget.NewFormItem(configKeyLabel("Respawn"), p.respawnEntry),
 	)
 
 	// Keyboard section
 	p.delayEntry = widget.NewEntry()
 	p.delayEntry.SetPlaceHolder("5")
-	p.wipeCheck = widget.NewCheck("Wipe by selection", nil)
+	p.wipeCheck = widget.NewCheck(l10n.X("editor.wipe_by_selection", "Wipe by selection"), nil)
 
 	keyboardForm := widget.NewForm(
-		widget.NewFormItem("Delay", p.delayEntry),
+		widget.NewFormItem(configKeyLabel("Delay"), p.delayEntry),
 		widget.NewFormItem("", p.wipeCheck),
 	)
 
 	// Wayland section
-	p.bypassXCheck = widget.NewCheck("Bypass X", nil)
+	p.bypassXCheck = widget.NewCheck(l10n.X("editor.bypass_x", "Bypass X"), nil)
 	p.waylandDelayEntry = widget.NewEntry()
 	p.waylandDelayEntry.SetPlaceHolder("50")
 	for i := range p.layoutEntries {
 		p.layoutEntries[i] = widget.NewMultiLineEntry()
-		p.layoutEntries[i].SetPlaceHolder(fmt.Sprintf("Layout %d keys...", i))
+		p.layoutEntries[i].SetPlaceHolder(l10n.X("editor.layout_keys_placeholder", "Layout {{.Index}} keys...", "Index", i))
 	}
 
 	waylandRows := []*widget.FormItem{
 		widget.NewFormItem("", p.bypassXCheck),
-		widget.NewFormItem("Delay", p.waylandDelayEntry),
+		widget.NewFormItem(configKeyLabel("Delay"), p.waylandDelayEntry),
 	}
 	for i, e := range p.layoutEntries {
-		waylandRows = append(waylandRows, widget.NewFormItem(fmt.Sprintf("Layout %d", i), e))
+		waylandRows = append(waylandRows, widget.NewFormItem(l10n.X("editor.layout_title", "Layout {{.Index}}", "Index", i), e))
 	}
 	waylandForm := widget.NewForm(waylandRows...)
 
 	basics := container.NewVScroll(container.NewVBox(
-		widget.NewCard("ScanDevices", "", scanDevicesForm),
-		widget.NewCard("Keyboard", "", keyboardForm),
-		widget.NewCard("Wayland", "", waylandForm),
+		widget.NewCard(l10n.X("editor.card.scandevices", "ScanDevices"), "", scanDevicesForm),
+		widget.NewCard(l10n.X("editor.card.keyboard", "Keyboard"), "", keyboardForm),
+		widget.NewCard(l10n.X("editor.card.wayland", "Wayland"), "", waylandForm),
 	))
 
 	wcObj, wc := newWindowClassesEditor()
@@ -125,27 +126,27 @@ func newEditorPanel(client *ipc.Client, router *soundRouter) (fyne.CanvasObject,
 	// Read-only view of the still-unbound sections (the [Actions] chain).
 	p.rawTOML = widget.NewMultiLineEntry()
 	p.rawTOML.Wrapping = fyne.TextWrapWord
-	p.rawTOML.SetPlaceHolder("# remaining sections ([Actions] chain), read-only")
+	p.rawTOML.SetPlaceHolder(l10n.X("editor.raw_placeholder", "# remaining sections ([Actions] chain), read-only"))
 
 	p.statusLabel = widget.NewLabel("")
 
-	loadBtn := widget.NewButton("Load", p.load)
-	applyBtn := widget.NewButton("Apply", p.apply)
-	reloadBtn := widget.NewButton("Reload daemon", p.reload)
+	loadBtn := widget.NewButton(l10n.X("editor.btn.load", "Load"), p.load)
+	applyBtn := widget.NewButton(l10n.X("editor.btn.apply", "Apply"), p.apply)
+	reloadBtn := widget.NewButton(l10n.X("editor.btn.reload_daemon", "Reload daemon"), p.reload)
 	buttons := container.NewHBox(loadBtn, applyBtn, reloadBtn)
 
 	subTabs := container.NewAppTabs(
-		container.NewTabItem("Basics", basics),
-		container.NewTabItem("ActionKeys", akObj),
-		container.NewTabItem("Templates", tmplObj),
-		container.NewTabItem("WindowClasses", wcObj),
-		container.NewTabItem("AutoReplace", arObj),
-		container.NewTabItem("Hotkeys", hkObj),
-		container.NewTabItem("AutoDetect", adObj),
-		container.NewTabItem("Sounds", sndObj),
-		container.NewTabItem("Diary", diaryObj),
-		container.NewTabItem("Actions", actObj),
-		container.NewTabItem("Other (raw)", container.NewVScroll(p.rawTOML)),
+		container.NewTabItem(l10n.X("editor.subtab.basics", "Basics"), basics),
+		container.NewTabItem(l10n.X("editor.subtab.actionkeys", "ActionKeys"), akObj),
+		container.NewTabItem(l10n.X("editor.subtab.templates", "Templates"), tmplObj),
+		container.NewTabItem(l10n.X("editor.subtab.windowclasses", "WindowClasses"), wcObj),
+		container.NewTabItem(l10n.X("editor.subtab.autoreplace", "AutoReplace"), arObj),
+		container.NewTabItem(l10n.X("editor.subtab.hotkeys", "Hotkeys"), hkObj),
+		container.NewTabItem(l10n.X("editor.subtab.autodetect", "AutoDetect"), adObj),
+		container.NewTabItem(l10n.X("editor.subtab.sounds", "Sounds"), sndObj),
+		container.NewTabItem(l10n.X("editor.subtab.diary", "Diary"), diaryObj),
+		container.NewTabItem(l10n.X("editor.subtab.actions", "Actions"), actObj),
+		container.NewTabItem(l10n.X("editor.subtab.other_raw", "Other (raw)"), container.NewVScroll(p.rawTOML)),
 	)
 
 	return container.NewBorder(nil, container.NewVBox(buttons, p.statusLabel), nil, nil, subTabs), p.load
@@ -234,7 +235,7 @@ func mapList(m map[string]any, key string) string {
 func (p *configPanel) load() {
 	data, err := p.client.GetConfig()
 	if err != nil {
-		p.statusLabel.SetText(fmt.Sprintf("Load failed: %v", err))
+		p.statusLabel.SetText(l10n.X("panel.load_failed_v", "Load failed: {{.Err}}", "Err", err))
 		return
 	}
 
@@ -266,7 +267,7 @@ func (p *configPanel) load() {
 	p.actions.load(data)
 
 	p.rawTOML.SetText(renderRawSections(data))
-	p.statusLabel.SetText("Config loaded from daemon")
+	p.statusLabel.SetText(l10n.X("panel.config_loaded", "Config loaded from daemon"))
 }
 
 // modsFromWidgets collects dotted-key modifications from non-empty widgets.
@@ -336,11 +337,11 @@ func splitNonEmpty(text string) []string {
 func (p *configPanel) apply() {
 	mods := p.modsFromWidgets()
 	if len(mods) == 0 {
-		p.statusLabel.SetText("Nothing to apply")
+		p.statusLabel.SetText(l10n.X("panel.nothing_to_apply", "Nothing to apply"))
 		return
 	}
 	if err := p.client.SetConfig(mods); err != nil {
-		p.statusLabel.SetText(fmt.Sprintf("Set failed: %v", err))
+		p.statusLabel.SetText(l10n.X("panel.set_failed_v", "Set failed: {{.Err}}", "Err", err))
 		return
 	}
 	p.reload()
@@ -350,14 +351,14 @@ func (p *configPanel) apply() {
 func (p *configPanel) reload() {
 	resp, err := p.client.Reload()
 	if err != nil {
-		p.statusLabel.SetText(fmt.Sprintf("Reload failed: %v (config saved)", err))
+		p.statusLabel.SetText(l10n.X("panel.reload_failed_saved", "Reload failed: {{.Err}} (config saved)", "Err", err))
 		return
 	}
 	if !resp.Ok {
-		p.statusLabel.SetText(fmt.Sprintf("Reload failed: %s", resp.Error))
+		p.statusLabel.SetText(l10n.X("panel.reload_failed_s", "Reload failed: {{.Error}}", "Error", resp.Error))
 		return
 	}
-	p.statusLabel.SetText(fmt.Sprintf("Applied, daemon respawned (PID %d)", resp.PID))
+	p.statusLabel.SetText(l10n.X("panel.apply_done", "Applied, daemon respawned (PID {{.PID}})", "PID", resp.PID))
 }
 
 // renderRawSections dumps every config section not covered by a structured
@@ -371,7 +372,7 @@ func renderRawSections(data map[string]any) string {
 		switch key {
 		case "ScanDevices", "Keyboard", "Wayland",
 			"Action", "ActionKeys", "Templates", "WindowClasses",
-			"AutoReplace", "Hotkeys", "Sounds", "Diary", "AutoDetect":
+			"AutoReplace", "Hotkeys", "Sounds", "Diary", "AutoDetect", "GUI":
 			continue
 		}
 		filtered[key] = normalizeFloats(value)
@@ -381,7 +382,7 @@ func renderRawSections(data map[string]any) string {
 	}
 	out, err := toml.Marshal(filtered)
 	if err != nil {
-		return fmt.Sprintf("# (cannot render: %v)", err)
+		return l10n.X("panel.cannot_render", "# (cannot render: {{.Err}})", "Err", err)
 	}
 	return string(out)
 }

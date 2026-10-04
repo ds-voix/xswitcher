@@ -9,6 +9,8 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
+
+	"xswitcher/internal/l10n"
 )
 
 type arRow struct {
@@ -24,7 +26,7 @@ type autoReplaceEditor struct {
 
 func newAutoReplaceEditor() (fyne.CanvasObject, *autoReplaceEditor) {
 	e := &autoReplaceEditor{list: container.NewVBox()}
-	add := widget.NewButton("Add rule", func() { e.addRow("", "", false) })
+	add := widget.NewButton(l10n.X("autoreplace.btn.add", "Add rule"), func() { e.addRow("", "", false) })
 	return container.NewBorder(add, nil, nil, nil, container.NewVScroll(e.list)), e
 }
 
@@ -32,17 +34,17 @@ func (e *autoReplaceEditor) addRow(trigger, replace string, exact bool) {
 	row := &arRow{
 		trigger: widget.NewEntry(),
 		replace: widget.NewEntry(),
-		exact:   widget.NewCheck("whole word only", nil),
+		exact:   widget.NewCheck(l10n.X("autoreplace.check.exact", "whole word only"), nil),
 	}
-	row.trigger.SetPlaceHolder("trigger, e.g. btw")
-	row.replace.SetPlaceHolder("replacement, e.g. by the way")
+	row.trigger.SetPlaceHolder(l10n.X("autoreplace.placeholder.trigger", "trigger, e.g. btw"))
+	row.replace.SetPlaceHolder(l10n.X("autoreplace.placeholder.replace", "replacement, e.g. by the way"))
 	row.trigger.SetText(trigger)
 	row.replace.SetText(replace)
 	row.exact.SetChecked(exact)
 	e.rows = append(e.rows, row)
 
 	var card *widget.Card // declared first: the remove closure below references it
-	remove := widget.NewButton("remove", func() {
+	remove := widget.NewButton(l10n.X("autoreplace.btn.remove", "remove"), func() {
 		for i, r := range e.rows {
 			if r == row {
 				e.rows = append(e.rows[:i], e.rows[i+1:]...)
@@ -55,8 +57,8 @@ func (e *autoReplaceEditor) addRow(trigger, replace string, exact bool) {
 	lay.markFlex(row.trigger)
 	lay.markFlex(row.replace)
 	card = widget.NewCard("", "", container.New(lay,
-		widget.NewLabel("Trigger"), row.trigger,
-		widget.NewLabel("Replace"), row.replace,
+		widget.NewLabel(configKeyLabel("Trigger")), row.trigger,
+		widget.NewLabel(configKeyLabel("Replace")), row.replace,
 		row.exact,
 		remove,
 	))

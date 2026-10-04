@@ -10,7 +10,6 @@
 package main
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -20,6 +19,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"xswitcher/internal/ipc"
+	"xswitcher/internal/l10n"
 )
 
 type diaryEditor struct {
@@ -40,7 +40,7 @@ type diaryEditor struct {
 func newDiaryEditor(client *ipc.Client) (fyne.CanvasObject, *diaryEditor) {
 	e := &diaryEditor{client: client}
 
-	e.enabled = widget.NewCheck("RECORD TYPED TEXT (keystrokes end up in a file)", nil)
+	e.enabled = widget.NewCheck(l10n.X("diary.check.enabled", "RECORD TYPED TEXT (keystrokes end up in a file)"), nil)
 	e.pathEntry = widget.NewEntry()
 	e.pathEntry.SetPlaceHolder("/var/lib/xswitcher/diary.log")
 	e.maxSize = widget.NewEntry()
@@ -50,20 +50,20 @@ func newDiaryEditor(client *ipc.Client) (fyne.CanvasObject, *diaryEditor) {
 
 	form := widget.NewForm(
 		widget.NewFormItem("", e.enabled),
-		widget.NewFormItem("Path", e.pathEntry),
-		widget.NewFormItem("MaxSizeMB", e.maxSize),
-		widget.NewFormItem("RotateCount", e.rotateCount),
+		widget.NewFormItem(configKeyLabel("Path"), e.pathEntry),
+		widget.NewFormItem(configKeyLabel("MaxSizeMB"), e.maxSize),
+		widget.NewFormItem(configKeyLabel("RotateCount"), e.rotateCount),
 	)
 
 	e.filterEntry = widget.NewEntry()
-	e.filterEntry.SetPlaceHolder("filter text...")
+	e.filterEntry.SetPlaceHolder(l10n.X("diary.placeholder.filter", "filter text..."))
 	e.filterEntry.OnChanged = func(string) { e.render() }
 	e.dateEntry = widget.NewEntry()
 	e.dateEntry.SetPlaceHolder("2006-01-02")
 	e.dateEntry.OnChanged = func(string) { e.render() }
 
-	fetchBtn := widget.NewButton("Fetch", e.fetch)
-	exportBtn := widget.NewButton("Export", e.export)
+	fetchBtn := widget.NewButton(l10n.X("diary.btn.fetch", "Fetch"), e.fetch)
+	exportBtn := widget.NewButton(l10n.X("diary.btn.export", "Export"), e.export)
 
 	e.view = widget.NewMultiLineEntry()
 	e.view.Wrapping = fyne.TextWrapOff
@@ -72,9 +72,9 @@ func newDiaryEditor(client *ipc.Client) (fyne.CanvasObject, *diaryEditor) {
 	e.note = widget.NewLabel("")
 
 	top := container.NewVBox(
-		widget.NewCard("[Diary] settings", "", form),
+		widget.NewCard(l10n.X("diary.card.title", "[Diary] settings"), "", form),
 		container.NewHBox(fetchBtn, exportBtn, e.note),
-		container.NewHBox(widget.NewLabel("text"), e.filterEntry, widget.NewLabel("date"), e.dateEntry),
+		container.NewHBox(widget.NewLabel(l10n.X("diary.label.text", "text")), e.filterEntry, widget.NewLabel(l10n.X("diary.label.date", "date")), e.dateEntry),
 	)
 	return container.NewBorder(top, nil, nil, nil, container.NewVScroll(e.view)), e
 }
@@ -114,12 +114,12 @@ func (e *diaryEditor) fetch() {
 	text, err := e.client.GetDiary()
 	if err != nil {
 		e.raw = ""
-		e.note.SetText(fmt.Sprintf("%v", err))
+		e.note.SetText(l10n.X("diary.fetch.error", "{{.Err}}", "Err", err))
 		e.render()
 		return
 	}
 	lines := strings.Count(text, "\n")
-	e.note.SetText(fmt.Sprintf("%d entries", lines))
+	e.note.SetText(l10n.XN("diary.entries.count", "{{.Count}} entries", lines))
 	e.raw = text
 	e.render()
 }
@@ -150,12 +150,12 @@ func (e *diaryEditor) render() {
 func (e *diaryEditor) export() {
 	dialog.ShowFileSave(func(writer fyne.URIWriteCloser, err error) {
 		if err != nil || writer == nil {
-			e.note.SetText("Export cancelled")
+			e.note.SetText(l10n.X("diary.export.cancelled", "Export cancelled"))
 			return
 		}
 		defer writer.Close()
 		if _, err := writer.Write([]byte(e.view.Text)); err != nil {
-			e.note.SetText(fmt.Sprintf("Export failed: %v", err))
+			e.note.SetText(l10n.X("diary.export.failed", "Export failed: {{.Err}}", "Err", err))
 		}
 	}, fyne.CurrentApp().Driver().AllWindows()[0])
 }

@@ -9,25 +9,29 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
+
+	"xswitcher/internal/l10n"
 )
 
 // The parser's gate (internal/config/parse.go) only realises the action set
 // named "Actions": any other non-empty value makes the whole config fail to
 // load, so the editor offers exactly "" and "Actions".
-const (
-	wcNoneLabel = "(none)"  // written back as Actions = ""
-	wcMainLabel = "Actions" // the only realised action set
-)
+const wcMainLabel = "Actions" // the only realised action set
+
+// wcNoneLabel is the dropdown caption for the empty value; it is display-only
+// and never written to the config (wcValueFor maps it back to ""), so unlike
+// wcMainLabel it goes through the catalogue.
+func wcNoneLabel() string { return l10n.X("windowclasses.select.none", "(none)") }
 
 func wcLabelFor(value string) string {
 	if value == "" {
-		return wcNoneLabel
+		return wcNoneLabel()
 	}
 	return value
 }
 
 func wcValueFor(label string) string {
-	if label == wcNoneLabel {
+	if label == wcNoneLabel() {
 		return ""
 	}
 	return label
@@ -46,7 +50,7 @@ type windowClassesEditor struct {
 
 func newWindowClassesEditor() (fyne.CanvasObject, *windowClassesEditor) {
 	e := &windowClassesEditor{list: container.NewVBox()}
-	add := widget.NewButton("Add window class", func() { e.addRow("", false, "Actions") })
+	add := widget.NewButton(l10n.X("windowclasses.btn.add", "Add window class"), func() { e.addRow("", false, "Actions") })
 	// The add button lives outside the list: load() replaces every row and
 	// must not have to re-add the button.
 	return container.NewBorder(add, nil, nil, nil, container.NewVScroll(e.list)), e
@@ -55,10 +59,10 @@ func newWindowClassesEditor() (fyne.CanvasObject, *windowClassesEditor) {
 func (e *windowClassesEditor) addRow(regex string, drops bool, actions string) {
 	row := &wcRow{
 		regex:   widget.NewEntry(),
-		drops:   widget.NewCheck("clicks drop", nil),
-		actions: widget.NewSelect([]string{wcNoneLabel, wcMainLabel}, nil),
+		drops:   widget.NewCheck(l10n.X("windowclasses.check.drops", "clicks drop"), nil),
+		actions: widget.NewSelect([]string{wcNoneLabel(), wcMainLabel}, nil),
 	}
-	row.regex.SetPlaceHolder("window class regex")
+	row.regex.SetPlaceHolder(l10n.X("windowclasses.placeholder.regex", "window class regex"))
 	row.regex.SetText(regex)
 	row.drops.SetChecked(drops)
 	row.actions.SetSelected(wcLabelFor(actions))
@@ -66,10 +70,10 @@ func (e *windowClassesEditor) addRow(regex string, drops bool, actions string) {
 
 	var card *widget.Card // declared first: the remove closure below references it
 	card = widget.NewCard("", "", container.NewHBox(
-		widget.NewLabel("Regex"), row.regex,
-		widget.NewLabel("Mouse"), row.drops,
-		widget.NewLabel("Actions"), row.actions,
-		widget.NewButton("remove", func() {
+		widget.NewLabel(configKeyLabel("Regex")), row.regex,
+		widget.NewLabel(configKeyLabel("Mouse")), row.drops,
+		widget.NewLabel(configKeyLabel("Actions")), row.actions,
+		widget.NewButton(l10n.X("windowclasses.btn.remove", "remove"), func() {
 			for i, r := range e.rows {
 				if r == row {
 					e.rows = append(e.rows[:i], e.rows[i+1:]...)

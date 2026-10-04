@@ -13,6 +13,8 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
+
+	"xswitcher/internal/l10n"
 )
 
 // Action names become part of a bare TOML table header ([Action.Name]), so
@@ -50,7 +52,7 @@ type actionsEditor struct {
 
 func newActionsEditor() (fyne.CanvasObject, *actionsEditor) {
 	e := &actionsEditor{list: container.NewVBox()}
-	add := widget.NewButton("Add action", func() { e.addRow("", nil) })
+	add := widget.NewButton(l10n.X("actions.btn.add", "Add action"), func() { e.addRow("", nil) })
 	return container.NewBorder(add, nil, nil, nil, container.NewVScroll(e.list)), e
 }
 
@@ -67,11 +69,11 @@ func (e *actionsEditor) addRow(name string, fields map[string]any) {
 		environment: widget.NewMultiLineEntry(),
 		layout:      widget.NewEntry(),
 		timeout:     widget.NewEntry(),
-		wait:        widget.NewCheck("Wait", nil),
-		useShell:    widget.NewCheck("Use shell", nil),
-		cleanEnv:    widget.NewCheck("Clean environment", nil),
+		wait:        widget.NewCheck(l10n.X("actions.check.wait", "Wait"), nil),
+		useShell:    widget.NewCheck(l10n.X("actions.check.shell", "Use shell"), nil),
+		cleanEnv:    widget.NewCheck(l10n.X("actions.check.cleanenv", "Clean environment"), nil),
 	}
-	r.name.SetPlaceHolder("action name")
+	r.name.SetPlaceHolder(l10n.X("actions.placeholder.name", "action name"))
 	r.name.SetText(name)
 
 	if fields != nil {
@@ -97,19 +99,19 @@ func (e *actionsEditor) addRow(name string, fields map[string]any) {
 	r.initialCleanEnv = r.cleanEnv.Checked
 
 	form := widget.NewForm(
-		widget.NewFormItem("Action", r.action),
-		widget.NewFormItem("Layout", r.layout),
-		widget.NewFormItem("Layouts", r.layouts),
-		widget.NewFormItem("Exec", r.exec),
-		widget.NewFormItem("Timeout", r.timeout),
+		widget.NewFormItem(configKeyLabel("Action"), r.action),
+		widget.NewFormItem(configKeyLabel("Layout"), r.layout),
+		widget.NewFormItem(configKeyLabel("Layouts"), r.layouts),
+		widget.NewFormItem(configKeyLabel("Exec"), r.exec),
+		widget.NewFormItem(configKeyLabel("Timeout"), r.timeout),
 		widget.NewFormItem("", r.wait),
-		widget.NewFormItem("SendBuffer", r.sendBuffer),
+		widget.NewFormItem(configKeyLabel("SendBuffer"), r.sendBuffer),
 		widget.NewFormItem("", r.useShell),
-		widget.NewFormItem("Directory", r.directory),
+		widget.NewFormItem(configKeyLabel("Directory"), r.directory),
 		widget.NewFormItem("", r.cleanEnv),
-		widget.NewFormItem("Environment", r.environment),
-		widget.NewFormItem("UID", r.uid),
-		widget.NewFormItem("GID", r.gid),
+		widget.NewFormItem(configKeyLabel("Environment"), r.environment),
+		widget.NewFormItem(configKeyLabel("UID"), r.uid),
+		widget.NewFormItem(configKeyLabel("GID"), r.gid),
 	)
 	card := widget.NewCard("Action."+name, "", container.NewVBox(r.name, form))
 	e.rows = append(e.rows, r)

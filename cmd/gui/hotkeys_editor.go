@@ -16,6 +16,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	cfg "xswitcher/internal/config"
+	"xswitcher/internal/l10n"
 )
 
 // hkMods is the fixed set of modifier checkboxes. Each maps to the daemon's
@@ -48,7 +49,7 @@ type hotkeysEditor struct {
 
 func newHotkeysEditor() (fyne.CanvasObject, *hotkeysEditor) {
 	e := &hotkeysEditor{list: container.NewVBox()}
-	add := widget.NewButton("Add hotkey", func() { e.addRow(nil, "") })
+	add := widget.NewButton(l10n.X("hotkeys.btn.add", "Add hotkey"), func() { e.addRow(nil, "") })
 	return container.NewBorder(add, nil, nil, nil, container.NewVScroll(e.list)), e
 }
 
@@ -108,7 +109,7 @@ func (e *hotkeysEditor) addRow(keys []string, action string) {
 	lay := newFieldLayout(0.20)
 	lay.markFlex(row.trigger)
 	lay.markFlex(row.action)
-	remove := widget.NewButton("remove", func() {
+	remove := widget.NewButton(l10n.X("hotkeys.btn.remove", "remove"), func() {
 		for i, r := range e.rows {
 			if r == row {
 				e.rows = append(e.rows[:i], e.rows[i+1:]...)
@@ -118,8 +119,8 @@ func (e *hotkeysEditor) addRow(keys []string, action string) {
 		e.list.Remove(card)
 	})
 	objs := []fyne.CanvasObject{
-		widget.NewLabel("Keys"), row.trigger, row.mods[0], row.mods[1], row.mods[2],
-		widget.NewLabel("Action"), row.action, remove,
+		widget.NewLabel(configKeyLabel("Keys")), row.trigger, row.mods[0], row.mods[1], row.mods[2],
+		widget.NewLabel(configKeyLabel("Action")), row.action, remove,
 	}
 	card = widget.NewCard("", "", container.New(lay, objs...))
 	e.list.Add(card)

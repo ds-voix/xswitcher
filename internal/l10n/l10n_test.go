@@ -87,7 +87,7 @@ func TestRussianPluralCategories(t *testing.T) {
 		{21, "21 запись"},
 	}
 	for _, c := range cases {
-		got := XN("status.entries.count", "{{.Count}} entries", c.count)
+		got := XN("diary.entries.count", "{{.Count}} entries", c.count)
 		if got != c.want {
 			t.Errorf("count %d: got %q want %q", c.count, got, c.want)
 		}

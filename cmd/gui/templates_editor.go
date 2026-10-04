@@ -11,6 +11,8 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
+
+	"xswitcher/internal/l10n"
 )
 
 type templateRow struct {
@@ -25,7 +27,7 @@ type templatesEditor struct {
 
 func newTemplatesEditor() (fyne.CanvasObject, *templatesEditor) {
 	e := &templatesEditor{list: container.NewVBox()}
-	add := widget.NewButton("Add template", func() { e.addRow("", "") })
+	add := widget.NewButton(l10n.X("templates.btn.add", "Add template"), func() { e.addRow("", "") })
 	return container.NewBorder(add, nil, nil, nil, container.NewVScroll(e.list)), e
 }
 
@@ -37,8 +39,8 @@ func (e *templatesEditor) addRow(key, val string) {
 	e.rows = append(e.rows, row)
 
 	form := widget.NewForm(
-		widget.NewFormItem("Key", row.key),
-		widget.NewFormItem("Value", row.val),
+		widget.NewFormItem(l10n.X("templates.form.key", "Key"), row.key),
+		widget.NewFormItem(l10n.X("templates.form.value", "Value"), row.val),
 	)
 	e.list.Add(widget.NewCard("", "", form))
 }
