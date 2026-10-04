@@ -49,8 +49,9 @@ type configPanel struct {
 // newEditorPanel creates the Config tab content. It also returns a load
 // function that fetches the live config from the daemon and populates the
 // widgets; main.go calls it when the Config tab is selected. The router
-// carries the live event→sound map to the IPC subscription callback.
-func newEditorPanel(client *ipc.Client, router *soundRouter) (fyne.CanvasObject, func()) {
+// carries the live event→sound map to the IPC subscription callback. The state
+// keeps the open sub-tab across the rebuild a language switch triggers.
+func newEditorPanel(client *ipc.Client, router *soundRouter, state *uiState) (fyne.CanvasObject, func()) {
 	p := &configPanel{client: client, router: router}
 
 	// ScanDevices section
@@ -148,6 +149,13 @@ func newEditorPanel(client *ipc.Client, router *soundRouter) (fyne.CanvasObject,
 		container.NewTabItem(l10n.X("editor.subtab.actions", "Actions"), actObj),
 		container.NewTabItem(l10n.X("editor.subtab.other_raw", "Other (raw)"), container.NewVScroll(p.rawTOML)),
 	)
+
+	subTabs.OnSelected = func(*container.TabItem) { state.sub = subTabs.SelectedIndex() }
+	// The first sub-tab is the one AppTabs opens by itself, so anything else has
+	// to be selected explicitly after the tree is rebuilt.
+	if state.sub > 0 {
+		subTabs.SelectIndex(state.sub)
+	}
 
 	return container.NewBorder(nil, container.NewVBox(buttons, p.statusLabel), nil, nil, subTabs), p.load
 }

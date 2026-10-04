@@ -74,10 +74,19 @@ func main() {
 	}()
 
 	var rebuild func()
-	rebuild = func() { w.SetContent(buildRoot(w, client, router, rebuild)) }
+	// Remembered across a language rebuild by tab index, never by label: the
+	// labels are the very thing that changes language.
+	state := new(uiState)
+	rebuild = func() { w.SetContent(buildRoot(w, client, router, state, rebuild)) }
 	rebuild()
 
 	w.ShowAndRun()
+}
+
+// uiState is where the open tabs live while the window content is thrown away and
+// built again.
+type uiState struct {
+	tab, sub int
 }
 
 // buildRoot creates the entire window content for the active locale. Fyne
@@ -85,8 +94,8 @@ func main() {
 // applied by throwing this tree away and building it again; that is why
 // rebuilding also re-reads the live config and status (unsaved edits in the
 // Config tab are dropped by design).
-func buildRoot(w fyne.Window, client *ipc.Client, router *soundRouter, rebuild func()) fyne.CanvasObject {
-	editor, loadConfig := newEditorPanel(client, router)
+func buildRoot(w fyne.Window, client *ipc.Client, router *soundRouter, state *uiState, rebuild func()) fyne.CanvasObject {
+	editor, loadConfig := newEditorPanel(client, router, state)
 	statusPanel, refreshStatus := newStatusPanel(client)
 	aboutPanel := newAboutPanel(func(code string) string { return setLanguage(client, code, rebuild) })
 
@@ -98,12 +107,18 @@ func buildRoot(w fyne.Window, client *ipc.Client, router *soundRouter, rebuild f
 	// Re-read the live daemon state every time a tab is opened. Match the tab by
 	// identity, not by its label: the label is localized and changes language.
 	tabs.OnSelected = func(item *container.TabItem) {
+		state.tab = tabs.SelectedIndex()
 		switch item {
 		case tabConfig:
 			loadConfig()
 		case tabStatus:
 			refreshStatus()
 		}
+	}
+	// AppTabs starts on the first item, so only a departure from it needs a call;
+	// selecting Config would also re-read the daemon for nothing.
+	if state.tab > 0 {
+		tabs.SelectIndex(state.tab)
 	}
 
 	statusBar := widget.NewLabel(l10n.X("gui.state.disconnected", "Disconnected"))
