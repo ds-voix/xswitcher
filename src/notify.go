@@ -9,6 +9,7 @@ import (
 
 	"xswitcher/internal/diary"
 	"xswitcher/internal/ipc"
+	"xswitcher/internal/l10n"
 )
 
 // ipcSrv is assigned in serve() before connectEvents() starts the event
@@ -56,7 +57,7 @@ func recordDiary(word t_keys) {
 // ipcGetDiary serves the "get_diary" command for the GUI viewer.
 func ipcGetDiary() (string, error) {
 	if !Diary.Enabled {
-		return "", fmt.Errorf("diary is not enabled in the config")
+		return "", l10n.Errf("daemon.diary_disabled", "diary is not enabled in the config")
 	}
 	// 512 KiB is plenty for a viewer tab and caps one socket line.
 	return diary.Read(Diary.Path, 512*1024)

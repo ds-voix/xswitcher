@@ -57,6 +57,7 @@ import (
 	"xswitcher/exec"
 	cfg "xswitcher/internal/config"
 	"xswitcher/internal/ipc"
+	"xswitcher/internal/l10n"
 	flag "github.com/spf13/pflag"       // CLI keys like python's "argparse". More flexible, comparing with "gnuflag"
 	"fmt"
 	"io/ioutil"
@@ -302,6 +303,16 @@ func config() {
 	parsed, err := cfg.ParseTOML(conf_)
 	if err != nil {
 		panic(fmt.Errorf("Config error: %s", err.Error()))
+	}
+
+	// Apply the persisted [GUI] Language over the locale resolved at startup.
+	// An error here is not fatal: the locale simply stays as MustInitFromEnv
+	// left it -- the parser only accepts codes whose catalogue is embedded, so
+	// nothing but a broken install can reach Set with a rejection.
+	if lang := strings.TrimSpace(parsed.GUI.Language); lang != "" {
+		if err := l10n.Set(lang); err != nil {
+			fmt.Fprintf(os.Stderr, "l10n: %v\n", err)
+		}
 	}
 
 	// Copy parsed config into daemon globals.
@@ -1785,14 +1796,14 @@ func ipcReload() ipc.Response {
 	// GUI has to hear, since it asked for a reload that did not happen.
 	p, err := forkChild()
 	if err != nil {
-		return ipc.Response{Ok: false, Error: fmt.Sprintf("reload refused, config kept as is: %v", err)}
+		return ipc.Response{Ok: false, Error: l10n.X("daemon.reload_refused", "reload refused, config kept as is: {{.Err}}", "Err", err.Error())}
 	}
 	// forkChild() only created a process. Until it owns the socket it has not passed the
 	// states the parser cannot see, and answering Ok before that is the lie that costs the
 	// user their keyboard: this process exits, the child never comes up, and the GUI is
 	// left reporting a reload that never happened.
 	if err := handover(p); err != nil {
-		return ipc.Response{Ok: false, Error: fmt.Sprintf("reload refused, config kept as is: %v", err)}
+		return ipc.Response{Ok: false, Error: l10n.X("daemon.reload_refused", "reload refused, config kept as is: {{.Err}}", "Err", err.Error())}
 	}
 	// Give the IPC response a chance to reach the GUI before this process exits.
 	go func() {
@@ -1846,7 +1857,7 @@ func configKillsChild() error {
 		return nil
 	}
 	if _, err = cfg.ParseTOML(data); err != nil {
-		return fmt.Errorf("%s would kill the respawned child: %w", CONFIG_PATH, err)
+		return l10n.Errf("daemon.respawn_child_kill", "{{.Target}} would kill the respawned child: {{.Err}}", "Target", CONFIG_PATH, "Err", err.Error())
 	}
 	return nil
 }
@@ -1936,6 +1947,7 @@ func serve() {
 }
 
 func main() {
+	l10n.MustInitFromEnv() // Resolve the message locale before the first output.
 	var err error
 	defer func() { // Report panic, if one occured
 		if *DEBUG { return } // StackTrace is only interesting along debug

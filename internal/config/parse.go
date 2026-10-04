@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/pelletier/go-toml"
+
+	"xswitcher/internal/l10n"
 )
 
 // ParsedConfig is the result of ParseTOML. The daemon copies these fields
@@ -29,6 +31,7 @@ type ParsedConfig struct {
 	Sounds        TSounds
 	Diary         TDiary
 	AutoDetect    TAutoDetect
+	GUI           TGUI
 }
 
 // SoundEvents are the event kinds the daemon emits; [Sounds] may only bind
@@ -437,6 +440,21 @@ func ParseTOML(data []byte) (*ParsedConfig, error) {
 				return nil, fmt.Errorf("unable to parse [Wayland]:\n%s", err.Error())
 			}
 
+		case "GUI":
+			raw, err := toml.Marshal(value)
+			if err != nil {
+				return nil, fmt.Errorf("unable to parse [GUI]:\n%s", err.Error())
+			}
+			if err = toml.Unmarshal(raw, &out.GUI); err != nil {
+				return nil, fmt.Errorf("unable to parse [GUI]:\n%s", err.Error())
+			}
+			// An empty Language means "follow the OS locale"; anything else has
+			// to name a catalogue l10n actually loaded, or the GUI's picker and
+			// the daemon's status answers would silently disagree on the locale.
+			if v := strings.TrimSpace(out.GUI.Language); v != "" && !knownLanguage(v) {
+				return nil, fmt.Errorf("[GUI] unknown Language %q (available: %s)", v, strings.Join(languageCodes(), ", "))
+			}
+
 		default:
 			return nil, fmt.Errorf("unknown section name [%s]", key)
 		}
@@ -477,6 +495,38 @@ func ParseTOML(data []byte) (*ParsedConfig, error) {
 	}
 
 	return out, nil
+}
+
+// knownLanguage reports whether raw names a locale whose catalogue l10n has
+// loaded. It mirrors l10n's internal canonical() rather than calling l10n.Set:
+// validating a file must not switch the process-wide locale as a side effect.
+// The comparison is on the base code -- lowercased, cut at ".", "@" and the
+// first "-" or "_" separator -- so "ru", "RU", "ru-RU", "ru_RU" and "ru.UTF-8"
+// all pass exactly when the ru catalogue is embedded.
+func knownLanguage(raw string) bool {
+	cut := strings.ToLower(strings.TrimSpace(raw))
+	if i := strings.IndexAny(cut, ".@"); i >= 0 {
+		cut = cut[:i]
+	}
+	hyphen := strings.ReplaceAll(cut, "_", "-")
+	base := strings.SplitN(hyphen, "-", 2)[0]
+	for _, d := range l10n.Available() {
+		if d.Code == cut || d.Code == hyphen || d.Code == base {
+			return true
+		}
+	}
+	return false
+}
+
+// languageCodes lists the loaded catalogue codes for the [GUI] validation
+// message, in the sorted order l10n.Available() already returns.
+func languageCodes() []string {
+	avail := l10n.Available()
+	codes := make([]string, len(avail))
+	for i, d := range avail {
+		codes[i] = d.Code
+	}
+	return codes
 }
 
 // checkActionCycles reports the first [Action.*] section that can be reached from

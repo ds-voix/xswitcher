@@ -89,6 +89,14 @@ type THotkey struct {
 // that root never talks to the user's sound server.
 type TSounds map[string]string
 
+// TGUI carries the GUI preferences the daemon also has to honour, because it
+// localises the status answers the GUI displays. Language is the interface
+// locale code ("ru", "en"); an empty value means "follow the OS locale" --
+// not "en", so an unset key adds no noise to the config file.
+type TGUI struct {
+	Language string
+}
+
 // TDiary configures the opt-in text diary: after each completed word the
 // daemon appends the resulting text (not raw keys) to Path, rotating the
 // file at MaxSizeMB and keeping RotateCount old copies. Disabled by
