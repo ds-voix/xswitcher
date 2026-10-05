@@ -95,6 +95,51 @@ Locale resolution order:
 An unknown or empty code at any step is skipped; an unknown explicit
 choice in `[GUI] Language` is rejected so a typo cannot silently pin
 the UI to the wrong file.
+
+## Themes
+
+The GUI ships three built-in choices -- `system`, `dark`, `light` -- and any
+number of your own. A theme is a JSON file under the user config directory:
+
+    ~/.config/xswitcher/themes/<name>.json
+
+(on Windows: `%APPDATA%\xswitcher\themes`; override the whole directory with
+the `XSWITCHER_THEMES_DIR` environment variable.) The picker in the About tab
+lists the built-ins plus every `*.json` basename found there, applies the
+choice immediately, and persists it as `[GUI] Theme` through the daemon, so it
+survives a restart and is read before the first widget is built.
+
+A file may set any subset of two blocks; everything it omits comes from the
+Fyne palette of the chosen `variant`:
+
+    {
+      "variant": "dark",
+      "name": "Neon",
+      "colors": {
+        "background": "#101418ff",
+        "primary": "#00e5b0ff",
+        "foreground": "#e6edf3ff"
+      },
+      "sizes": {
+        "text": 14,
+        "padding": 8,
+        "inputRadius": 6
+      }
+    }
+
+`variant` is `"dark"` or `"light"` (anything else is treated as dark) and picks
+the fallback palette. `colors` keys are Fyne theme color names (28 in total, for
+example `background`, `foreground`, `primary`, `button`, `menuBackground`,
+`inputBackground`, `hyperlink`, `error`), and values are hex with a leading
+`#`: `#rrggbb` or `#rrggbbaa`.
+`sizes` keys are Fyne theme size names (19 in total, for example `text`,
+`padding`, `innerPadding`, `lineSpacing`, `inputRadius`, `scrollBar`) with
+floating-point values in pixels.
+
+A malformed file, a hex value the loader cannot parse, or a theme name that
+tries to leave the themes directory (`..`, `/`, `\`) is refused: the picker
+shows why and keeps the previous theme.
+
 ## How to build.
 You must install (libX11-devel | libx11-dev) package for X bindings.  
 * The package name may, of course, be different in Your distro.  

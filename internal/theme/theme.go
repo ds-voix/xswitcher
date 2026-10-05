@@ -1,6 +1,6 @@
 // Package theme provides custom Fyne themes loaded from JSON files.
 // User themes live under ~/.config/xswitcher/themes/<name>.json and override
-// any subset of the 29 ColorName + 20 SizeName keys; missing keys fall back
+// any subset of the 28 ColorName + 19 SizeName keys; missing keys fall back
 // to Fyne's built-in dark or light palette depending on the "variant" field.
 package theme
 
