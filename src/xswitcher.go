@@ -1966,6 +1966,29 @@ func serve() {
 	}
 }
 
+// watchInputDevices forwards every CREATE below /dev/input to onNewDevice until the
+// watcher is closed. A closed channel keeps answering reads with ok == false forever,
+// so the loop has to end there: the previous `continue` made the goroutine spin and
+// print on every iteration while main() was still unwinding, which flooded the log.
+func watchInputDevices(w *fsnotify.Watcher, onNewDevice func(name string)) {
+	for {
+		select {
+		case event, ok := <-w.Events:
+			if !ok {
+				return
+			}
+			if event.Has(fsnotify.Create) {
+				onNewDevice(event.Name)
+			}
+		case err, ok := <-w.Errors:
+			if !ok {
+				return
+			}
+			fmt.Println(l10n.X("daemon.watcher_error", "watcher error: {{.Err}}", "Err", err))
+		}
+	}
+}
+
 func main() {
 	l10n.MustInitFromEnv() // Resolve the message locale before the first output.
 	var err error
@@ -2022,28 +2045,11 @@ func main() {
 	}
 	defer watcher.Close()
 
-	go func() {
-		for {
-			select {
-			case event, ok := <-watcher.Events:
-				if !ok {
-					fmt.Printf("***WTF***: read(watcher.Events) != ok\n")
-					continue
-				}
-				if event.Has(fsnotify.Create) {
-					fmt.Printf("New input device: %s\n", event.Name)
-					time.Sleep(1000 * time.Millisecond)
-					connectEvents(event.Name)
-				}
-			case err, ok := <-watcher.Errors:
-				if !ok {
-					fmt.Printf("***WTF***: read(watcher.Errors) != ok\n")
-					continue
-				}
-				fmt.Println(l10n.X("daemon.watcher_error", "watcher error: {{.Err}}", "Err", err))
-			}
-		}
-	}()
+	go watchInputDevices(watcher, func(name string) {
+		fmt.Printf("New input device: %s\n", name)
+		time.Sleep(1000 * time.Millisecond)
+		connectEvents(name)
+	})
 
 	// inotify on "/dev/input"
 	err = watcher.Add("/dev/input")
