@@ -85,7 +85,7 @@ func initKeyBD() error {
 	return nil
 }
 
-//actualy don't use
+// actualy don't use
 func destroyLinuxUInput() {
 	syscall.Syscall(syscall.SYS_IOCTL, fd.Fd(), _UI_DEV_DESTROY, 0)
 	fd.Close()

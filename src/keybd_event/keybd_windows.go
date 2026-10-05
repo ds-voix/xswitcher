@@ -37,7 +37,7 @@ func (k *KeyBonding) Press() error {
 	return nil
 }
 
-//Release key(s)
+// Release key(s)
 func (k *KeyBonding) Release() error {
 	if k.hasALT {
 		upKey(_VK_ALT)
@@ -188,7 +188,7 @@ const (
 	VK_F22 = 0x85 + 0xFFF
 	VK_F23 = 0x86 + 0xFFF
 	VK_F24 = 0x87 + 0xFFF
-	
+
 	VK_NUMLOCK    = 69
 	VK_SCROLLLOCK = 70
 	VK_RESERVED   = 0

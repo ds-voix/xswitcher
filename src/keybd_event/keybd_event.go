@@ -6,7 +6,7 @@ package keybd_event
 // otherwise it gets its own events back.
 const DeviceName = "keybd interface"
 
-//KeyBonding type for keybd_event
+// KeyBonding type for keybd_event
 type KeyBonding struct {
 	hasCTRL   bool
 	hasALT    bool
@@ -18,7 +18,7 @@ type KeyBonding struct {
 	keys      []int
 }
 
-//NewKeyBonding Use for create struct KeyBounding
+// NewKeyBonding Use for create struct KeyBounding
 func NewKeyBonding() (KeyBonding, error) {
 	keyBounding := KeyBonding{}
 	keyBounding.Clear()
@@ -29,7 +29,7 @@ func NewKeyBonding() (KeyBonding, error) {
 	return keyBounding, nil
 }
 
-//Clear clean instance
+// Clear clean instance
 func (k *KeyBonding) Clear() {
 	k.hasALT = false
 	k.hasCTRL = false
@@ -41,51 +41,51 @@ func (k *KeyBonding) Clear() {
 	k.keys = []int{}
 }
 
-//SetKeys set keys
+// SetKeys set keys
 func (k *KeyBonding) SetKeys(keys ...int) {
 	k.keys = keys
 }
 
-//AddKey add one key pressed
+// AddKey add one key pressed
 func (k *KeyBonding) AddKey(key int) {
 	k.keys = append(k.keys, key)
 }
 
-//HasALT If key ALT pressed
+// HasALT If key ALT pressed
 func (k *KeyBonding) HasALT(b bool) {
 	k.hasALT = b
 }
 
-//HasCTRL If key CTRL pressed
+// HasCTRL If key CTRL pressed
 func (k *KeyBonding) HasCTRL(b bool) {
 	k.hasCTRL = b
 }
 
-//HasSHIFT If key SHIFT pressed
+// HasSHIFT If key SHIFT pressed
 func (k *KeyBonding) HasSHIFT(b bool) {
 	k.hasSHIFT = b
 }
 
-//HasALTGR If key ALTGR pressed
+// HasALTGR If key ALTGR pressed
 func (k *KeyBonding) HasALTGR(b bool) {
 	k.hasALTGR = b
 }
 
-//HasSuper If key Super pressed
+// HasSuper If key Super pressed
 func (k *KeyBonding) HasSuper(b bool) {
 	k.hasSuper = b
 }
 
-//HasCTRLR If key CTRLR pressed
+// HasCTRLR If key CTRLR pressed
 //
-//This is currently not supported on macOS
+// This is currently not supported on macOS
 func (k *KeyBonding) HasCTRLR(b bool) {
 	k.hasRCTRL = b
 }
 
-//HasSHIFTR If key SHIFTR pressed
+// HasSHIFTR If key SHIFTR pressed
 //
-//This is currently not supported on macOS
+// This is currently not supported on macOS
 func (k *KeyBonding) HasSHIFTR(b bool) {
 	k.hasRSHIFT = b
 }

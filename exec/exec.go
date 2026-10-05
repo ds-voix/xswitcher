@@ -21,38 +21,38 @@ import (
 const defaultMaxReply = 1 << 16
 
 type Command struct {
-	id string        // Sequence ID may be set. Othewise, it is auto-generated.
-	no_exec bool
-	UID, GID uint32  // "run_as" linux representation
-	UseShell bool
-	No_wait bool     // https://golang.org/pkg/os/exec/#Cmd.Start vs "Run()" or m.b. "Wait()"
-	Timeout float64
+	id        string // Sequence ID may be set. Othewise, it is auto-generated.
+	no_exec   bool
+	UID, GID  uint32 // "run_as" linux representation
+	UseShell  bool
+	No_wait   bool // https://golang.org/pkg/os/exec/#Cmd.Start vs "Run()" or m.b. "Wait()"
+	Timeout   float64
 	max_reply int64
-// https://golang.org/pkg/os/exec/#Cmd
+	// https://golang.org/pkg/os/exec/#Cmd
 	Set_env []string
 	Set_dir string
 	Command string
-	Args []string
-	StdIn []byte
+	Args    []string
+	StdIn   []byte
 }
 
 type Result struct {
-	ID string             `json:"id"`
-	Processed bool        `json:"processed"` // Was this command ever been processed?
-	Command string        `json:"command"`
-	Args []string         `json:"args,omitempty"`
-	Status int            `json:"status"`
-	StdOut []byte         `json:"stdout,omitempty"`
-	StdErr []byte         `json:"stderr,omitempty"`
+	ID        string   `json:"id"`
+	Processed bool     `json:"processed"` // Was this command ever been processed?
+	Command   string   `json:"command"`
+	Args      []string `json:"args,omitempty"`
+	Status    int      `json:"status"`
+	StdOut    []byte   `json:"stdout,omitempty"`
+	StdErr    []byte   `json:"stderr,omitempty"`
 }
 
 // https://golang.org/pkg/os/exec/#Cmd
-func ExecCommand(c *Command) (*Result) {
-//	var waitWorkers *sync.WaitGroup
+func ExecCommand(c *Command) *Result {
+	//	var waitWorkers *sync.WaitGroup
 
 	r := &Result{ID: c.id,
-					Command: c.Command,
-					Args: c.Args}
+		Command: c.Command,
+		Args:    c.Args}
 
 	cmd := exec.Command(c.Command)
 	if c.UseShell { // Pack into bash environment (In fact, bash is *sh's mainstream. And I unwill to deep into specifics)
@@ -83,13 +83,13 @@ func ExecCommand(c *Command) (*Result) {
 
 	// http://www.agardner.me/golang/garbage/collection/gc/escape/analysis/2015/10/18/go-escape-analysis.html
 	// https://habr.com/ru/company/intel/blog/422447/
-	var _stdout, _stderr     bytes.Buffer
-	var stdoutIn, stderrIn   io.ReadCloser
+	var _stdout, _stderr bytes.Buffer
+	var stdoutIn, stderrIn io.ReadCloser
 	var errStdout, errStderr error
 
 	stdout := io.Writer(&_stdout)
 	stderr := io.Writer(&_stderr)
-  	if ! c.No_wait { // Otherwise, just fork process with /dev/null at stdout&stderr.
+	if !c.No_wait { // Otherwise, just fork process with /dev/null at stdout&stderr.
 		var perr error
 		if stdoutIn, perr = cmd.StdoutPipe(); perr != nil {
 			r.Status = -1
@@ -112,7 +112,7 @@ func ExecCommand(c *Command) (*Result) {
 	err := cmd.Start()
 	r.Processed = true
 	if err != nil {
-		r.StdErr= []byte(err.Error())
+		r.StdErr = []byte(err.Error())
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			if _status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
 				r.Status = _status.ExitStatus()
@@ -123,7 +123,7 @@ func ExecCommand(c *Command) (*Result) {
 
 		return r
 	}
-//	fmt.Printf("pid = %d\n", cmd.Process.Pid)
+	//	fmt.Printf("pid = %d\n", cmd.Process.Pid)
 
 	if c.No_wait {
 		cmd.Process.Release() // Drop PPID to avoid zombies
@@ -172,7 +172,7 @@ func ExecCommand(c *Command) (*Result) {
 			io.Copy(ioutil.Discard, stdoutIn) // Discard all the rest of stdout
 		}
 		wg.Done()
-	} ()
+	}()
 	_, errStderr = io.CopyN(stderr, stderrIn, maxReply)
 	if errStderr == io.EOF {
 		errStderr = nil
