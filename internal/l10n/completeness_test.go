@@ -79,7 +79,7 @@ func goStringLiteral(raw string) string {
 		if text == "" {
 			text = m[2]
 		} else {
-			text = strings.NewReplacer("\\\"", "\"", "\\\\", "\\", "\\t", "\t", "\\r", "\r").Replace(text)
+			text = strings.NewReplacer("\\\"", "\"", "\\\\", "\\", "\\t", "\t", "\\r", "\r", "\\n", "\n").Replace(text)
 		}
 		b.WriteString(text)
 	}
