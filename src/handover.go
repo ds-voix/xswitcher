@@ -56,7 +56,7 @@ func listenIPC() {
 		return
 	}
 	if err := ipcSrv.Start(); err != nil {
-		fmt.Printf("%s\n", l10n.X("daemon.ipc_start_failed", "IPC server failed: {{.Err}}", "Err", err.Error()))
+		fmt.Printf("%s\n", l10n.X("daemon.ipc_start_failed", "IPC server failed to start: {{.Err}}", "Err", err.Error()))
 		return
 	}
 	if *DEBUG || *VERBOSE {

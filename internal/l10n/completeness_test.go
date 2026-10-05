@@ -42,6 +42,23 @@ var configLabelRe = regexp.MustCompile("configKeyLabel\\(\\s*\"([^\"]+)\"\\s*\\)
 // ActionKeys captions), which makes the whole namespace reachable.
 var configLabelDynamicRe = regexp.MustCompile("configKeyLabel\\(\\s*[^\"\\)\\s]\\w*\\s*\\)")
 
+// ruMayEqualEn are the entries whose Russian text is legitimately identical to
+// English: single machine tokens (GID, UID, PID, Wayland, the names of keys that
+// are shown as they are) and a bare placeholder. Everything else that repeats
+// en.json is an untranslated calque, not a translation.
+var ruMayEqualEn = []string{
+	"config.key.gid",
+	"config.key.uid",
+	"diary.fetch.error",
+	"editor.card.wayland",
+	"keyname.enter",
+	"keyname.escape",
+	"keyname.fn",
+	"keyname.label.unknown",
+	"keyname.tab",
+	"status.field.pid",
+}
+
 var placeholderRe = regexp.MustCompile("\\{\\{\\.(\\w+)\\}\\}")
 
 // skipDirs are trees that are not source of this repository: the module cache is
@@ -262,6 +279,24 @@ func TestCataloguesCoverEveryCallSite(t *testing.T) {
 	sort.Strings(missingEN)
 	if len(missingEN) > 0 {
 		problems = append(problems, "keys in ru.json but not in en.json: "+strings.Join(missingEN, ", "))
+	}
+
+	// A Russian entry that repeats the English text byte for byte is not a
+	// translation: the switch to ru then still shows English, and the placeholder
+	// check above cannot notice, because identical text has identical placeholders.
+	calques := []string{}
+	for key, enValue := range en {
+		ruValue, ok := ru[key]
+		if !ok || contains(ruMayEqualEn, key) {
+			continue
+		}
+		if strings.Join(forms(enValue), "\x00") == strings.Join(forms(ruValue), "\x00") {
+			calques = append(calques, key)
+		}
+	}
+	sort.Strings(calques)
+	if len(calques) > 0 {
+		problems = append(problems, "ru.json repeats the English text for: "+strings.Join(calques, ", "))
 	}
 
 	t.Logf("call sites: %d keys, en: %d entries, ru: %d entries", len(sites), len(en), len(ru))
