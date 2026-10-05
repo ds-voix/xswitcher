@@ -283,14 +283,14 @@ func config() {
 
 	conf_file, err := os.Open(*config_path)
 	if err != nil {
-		fmt.Println(fmt.Errorf("Config error: unable to open config file:\n%s", err.Error()))
+		fmt.Println(l10n.X("daemon.config_open_failed", "Config error: unable to open config file:\n{{.Err}}", "Err", err.Error()))
 		fmt.Println(l10n.X("daemon.using_defaults", "* Using defaults!"))
 		conf_ = []byte(embeddedConfig.Toml)
 	} else {
 		defer conf_file.Close()
 		conf_, err = ioutil.ReadAll(conf_file)
 		if err != nil {
-			fmt.Println(fmt.Errorf("Config error: unable to read config file:\n%s", err.Error()))
+			fmt.Println(l10n.X("daemon.config_read_failed", "Config error: unable to read config file:\n{{.Err}}", "Err", err.Error()))
 			fmt.Println(l10n.X("daemon.using_defaults", "* Using defaults!"))
 			conf_ = []byte(embeddedConfig.Toml)
 		}
@@ -479,7 +479,7 @@ func sequences() {
 					t := strings.TrimLeft(rule[tpl[0][0]:tpl[0][1]], " SEQ:")
 					if hasFreeQuantifier(t) {
 						seq.TailUnprovable = true
-						fmt.Printf("Parse warning: the rule for \"Action.%s\" ends in the RetypeWord action, but its SEQ tail \"%s\" matches a varying number of key events. RetypeWord takes the number of the shortcut's own events from that match, so it wipes too few characters or none at all. The rule will not fire; write the tail as the exact chain, e.g. \"SEQ:(PAUSE:1,PAUSE:0)\".\n", key, t)
+						fmt.Println(l10n.X("daemon.seq_tail_unprovable", "Parse warning: the rule for \"Action.{{.Action}}\" ends in the RetypeWord action, but its SEQ tail \"{{.Tail}}\" matches a varying number of key events. RetypeWord takes the number of the shortcut's own events from that match, so it wipes too few characters or none at all. The rule will not fire; write the tail as the exact chain, e.g. \"SEQ:(PAUSE:1,PAUSE:0)\".", "Action", key, "Tail", t))
 					}
 				}
 			}
@@ -903,7 +903,7 @@ func sendKeySequence(keys []string) {
 // ACTIONS (RetypeWord, Switch, Layout, Respawn, Exec)
 func RetypeWord(A *TAction) {
 	if (len(WORD) - EXTRA) < 1 { // WTF?!
-		fmt.Printf("RetypeWord error: WORD(%v) is smaller than EXTRA(%v)!\n", len(WORD), EXTRA)
+		fmt.Println(l10n.X("daemon.retypeword_too_small", "RetypeWord error: WORD({{.Word}}) is smaller than EXTRA({{.Extra}})!", "Word", len(WORD), "Extra", EXTRA))
 		sendSound("error")
 		newWord()
 		return
@@ -947,7 +947,7 @@ func RetypeWord(A *TAction) {
 			case uint16(key_def["SPACE"]):
 				count++
 			case uint16(key_def["BACKSPACE"]):
-				fmt.Println("RetypeWord error: BACKSPACE inside WORD!")
+				fmt.Println(l10n.X("daemon.retypeword_backspace", "RetypeWord error: BACKSPACE inside WORD!"))
 				newWord()
 				return
 			}
@@ -1042,7 +1042,7 @@ func RetypeWord(A *TAction) {
 
 	// Clear virtual keyboard state
 	if len(DOWN) > 0 {
-		fmt.Printf("RetypeWord warning: found pushed keys after retyping was done! %v", DOWN)
+		fmt.Print(l10n.X("daemon.retypeword_pushed_keys", "RetypeWord warning: found pushed keys after retyping was done! {{.Keys}}", "Keys", DOWN))
 		for k, _ := range DOWN {
 			sendKey(t_key{k, 0})
 		}
@@ -1585,7 +1585,7 @@ func events(device *evdev.InputDevice) {
 	for {
 		event, err := device.ReadOne()
 		if err != nil {
-			fmt.Printf("Closing device \"%s\" due to an error:\n\"\"\" %s \"\"\"\n", name, err)
+			fmt.Println(l10n.X("daemon.device_closing_on_error", "Closing device \"{{.Device}}\" due to an error:\n\"\"\" {{.Err}} \"\"\"", "Device", name, "Err", err))
 			return
 		}
 
@@ -2046,7 +2046,7 @@ func main() {
 	defer watcher.Close()
 
 	go watchInputDevices(watcher, func(name string) {
-		fmt.Printf("New input device: %s\n", name)
+		fmt.Println(l10n.X("daemon.new_input_device", "New input device: {{.Name}}", "Name", name))
 		time.Sleep(1000 * time.Millisecond)
 		connectEvents(name)
 	})
