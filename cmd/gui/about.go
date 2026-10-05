@@ -11,13 +11,15 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"xswitcher/internal/about"
+	"xswitcher/internal/ipc"
 	"xswitcher/internal/l10n"
+	customtheme "xswitcher/internal/theme"
 )
 
 // newAboutPanel creates the About tab content showing version, commit,
-// attribution, project URLs and the language selector. onLanguage applies a
-// chosen catalogue code and returns a message to display (empty for nothing).
-func newAboutPanel(onLanguage func(code string) string) fyne.CanvasObject {
+// attribution, project URLs, the language selector and the theme picker.
+// onLanguage applies a chosen catalogue code and returns a message to display.
+func newAboutPanel(client *ipc.Client, onLanguage func(code string) string) fyne.CanvasObject {
 	title := widget.NewLabelWithStyle(l10n.X("about.title", "xswitcher GUI"), fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
 	version := widget.NewLabel(l10n.X("about.version", "Version: {{.Value}}", "Value", about.Version))
 	commit := widget.NewLabel(l10n.X("about.commit", "Commit: {{.Value}}", "Value", about.Commit))
@@ -38,6 +40,14 @@ func newAboutPanel(onLanguage func(code string) string) fyne.CanvasObject {
 		container.NewVBox(newLanguagePicker(onLanguage, feedback.SetText), feedback),
 	)
 
+	themeFeedback := widget.NewLabel("")
+	themeFeedback.Alignment = fyne.TextAlignCenter
+	themeCard := widget.NewCard(
+		l10n.X("about.theme_card", "Theme"),
+		l10n.X("about.theme_note", "Select a built-in variant or a custom theme from ~/.config/xswitcher/themes/."),
+		newThemePicker(client, feedback.SetText),
+	)
+
 	return container.NewVBox(
 		container.NewPadded(title),
 		version,
@@ -49,6 +59,7 @@ func newAboutPanel(onLanguage func(code string) string) fyne.CanvasObject {
 		license,
 		widget.NewSeparator(),
 		languageCard,
+		themeCard,
 	)
 }
 
@@ -92,4 +103,31 @@ func languageLabel(d l10n.Descriptor) string {
 		return d.Name
 	}
 	return fmt.Sprintf("%s (%s)", d.Name, d.English)
+}
+
+func newThemePicker(client *ipc.Client, showFeedback func(string)) *widget.Select {
+	names := customtheme.List()
+	picker := widget.NewSelect(names, nil)
+	if cur := persistedTheme(client); cur != "" {
+		for _, n := range names {
+			if n == cur {
+				picker.SetSelected(cur)
+				break
+			}
+		}
+	}
+	picker.OnChanged = func(name string) {
+		t, err := customtheme.Load(name)
+		if err != nil {
+			showFeedback(l10n.X("about.theme_rejected", "Not applied: {{.Err}}", "Err", err))
+			return
+		}
+		fyne.CurrentApp().Settings().SetTheme(t)
+		if err := client.SetConfig(map[string]any{"GUI.Theme": name}); err != nil {
+			showFeedback(l10n.X("about.theme_not_saved", "Applied, but not saved: {{.Err}}", "Err", err))
+			return
+		}
+		showFeedback(l10n.X("about.theme_applied", "Theme applied: {{.Name}}", "Name", name))
+	}
+	return picker
 }

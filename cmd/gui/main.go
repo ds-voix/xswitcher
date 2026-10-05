@@ -27,6 +27,7 @@ import (
 	"xswitcher/internal/ipc"
 	"xswitcher/internal/l10n"
 	"xswitcher/internal/sounds"
+	customtheme "xswitcher/internal/theme"
 )
 
 func main() {
@@ -54,6 +55,13 @@ func main() {
 	applyFyneLocale(code)
 
 	a := app.NewWithID("com.github.xswitcher.gui")
+	if persistedTheme := persistedTheme(client); persistedTheme != "" {
+		if t, err := customtheme.Load(persistedTheme); err == nil {
+			a.Settings().SetTheme(t)
+		} else {
+			fmt.Fprintf(os.Stderr, "theme: %v\n", err)
+		}
+	}
 	w := a.NewWindow("xswitcher")
 	w.Resize(fyne.NewSize(600, 500))
 
@@ -97,7 +105,7 @@ type uiState struct {
 func buildRoot(w fyne.Window, client *ipc.Client, router *soundRouter, state *uiState, rebuild func()) fyne.CanvasObject {
 	editor, loadConfig := newEditorPanel(client, router, state)
 	statusPanel, refreshStatus := newStatusPanel(client)
-	aboutPanel := newAboutPanel(func(code string) string { return setLanguage(client, code, rebuild) })
+	aboutPanel := newAboutPanel(client, func(code string) string { return setLanguage(client, code, rebuild) })
 
 	tabConfig := container.NewTabItem(l10n.X("gui.tab.config", "Config"), editor)
 	tabStatus := container.NewTabItem(l10n.X("gui.tab.status", "Status"), statusPanel)
@@ -152,6 +160,14 @@ func persistedLanguage(client *ipc.Client) string {
 		return ""
 	}
 	return mapStr(section(data, "GUI"), "Language")
+}
+
+func persistedTheme(client *ipc.Client) string {
+	data, err := client.GetConfig()
+	if err != nil {
+		return ""
+	}
+	return mapStr(section(data, "GUI"), "Theme")
 }
 
 // setLanguage applies a language choice: it switches the resolver, persists the

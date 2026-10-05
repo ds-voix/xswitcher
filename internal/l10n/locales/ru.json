@@ -294,5 +294,10 @@
   "daemon.hotkey_unknown_key": "Предупреждение хоткеев: неизвестная клавиша {{.Name}} никогда не сработает",
   "daemon.autodetect_bad_entry": "Предупреждение AutoDetect: запись {{.Item}} не соответствует формату \"<группа>:<язык>\"",
   "daemon.autodetect_bad_group": "Предупреждение AutoDetect: запись {{.Item}} указывает несуществующую группу",
-  "daemon.autodetect_no_glyph_table": "Предупреждение AutoDetect: запись {{.Item}} указывает язык без таблицы глифов"
+  "daemon.autodetect_no_glyph_table": "Предупреждение AutoDetect: запись {{.Item}} указывает язык без таблицы глифов",
+  "about.theme_card": "Тема оформления",
+  "about.theme_note": "Выберите встроенный вариант или пользовательскую тему из ~/.config/xswitcher/themes/.",
+  "about.theme_applied": "Тема применена: {{.Name}}",
+  "about.theme_rejected": "Не применено: {{.Err}}",
+  "about.theme_not_saved": "Применено, но не сохранено: {{.Err}}"
 }

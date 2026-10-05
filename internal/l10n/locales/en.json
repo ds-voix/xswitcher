@@ -292,5 +292,10 @@
   "daemon.hotkey_unknown_key": "Hotkey warning: unknown key {{.Name}} can never fire",
   "daemon.autodetect_bad_entry": "AutoDetect warning: entry {{.Item}} is not \"<group>:<language>\"",
   "daemon.autodetect_bad_group": "AutoDetect warning: entry {{.Item}} names no usable group",
-  "daemon.autodetect_no_glyph_table": "AutoDetect warning: entry {{.Item}} names a language with no glyph table"
+  "daemon.autodetect_no_glyph_table": "AutoDetect warning: entry {{.Item}} names a language with no glyph table",
+  "about.theme_card": "Theme",
+  "about.theme_note": "Select a built-in variant or a custom theme from ~/.config/xswitcher/themes/.",
+  "about.theme_applied": "Theme applied: {{.Name}}",
+  "about.theme_rejected": "Not applied: {{.Err}}",
+  "about.theme_not_saved": "Applied, but not saved: {{.Err}}"
 }

@@ -93,8 +93,12 @@ type TSounds map[string]string
 // localises the status answers the GUI displays. Language is the interface
 // locale code ("ru", "en"); an empty value means "follow the OS locale" --
 // not "en", so an unset key adds no noise to the config file.
+// Theme selects a built-in variant ("dark", "light") or names a user theme
+// file under ~/.config/xswitcher/themes/<name>.json; empty means follow Fyne's
+// system preference.
 type TGUI struct {
 	Language string
+	Theme    string
 }
 
 // TDiary configures the opt-in text diary: after each completed word the
