@@ -707,11 +707,33 @@ for i in $(seq 40); do
 done
 [ -d "/proc/$FDPID" ] || { echo "FATAL: the GOGC=off daemon of phase 14 is gone"; head -5 /tmp/fd.log | sed 's/^/  /'; exit 9; }
 sleep 1
-HELD=$(ls -l /proc/$FDPID/fd 2>/dev/null | grep -oE "/dev/input/event[0-9]+" | sort -u | wc -l)
-echo "  bypassed devices in the log: ${HITS:-0} of 3, event descriptors held: $HELD"
+# Count only the stand's own fixtures. uinput devices live in the kernel, so a keyboard another
+# container or session left running is visible here as an ordinary device: the daemon attaches it
+# and holds its descriptor legitimately. Measured on 2026-10-05 with the demo slot's
+# "i18n-demo-source-keyboard" alive: the unfiltered count was 2 (the stand source plus that
+# keyboard) and F1 failed on the environment; with the foreign name added to [ScanDevices] Bypass
+# the same binary held exactly 1. Printing the foreign descriptors keeps that visible in the log
+# instead of turning it into an unexplained number.
+HELD_ALL=$(ls -l /proc/$FDPID/fd 2>/dev/null | grep -oE "/dev/input/event[0-9]+" | sort -u)
+STAND_NODES=$(python3 - <<'PY'
+import evdev
+for p in evdev.list_devices():
+    try:
+        d = evdev.InputDevice(p)
+    except Exception:      # a node whose kernel device is already gone
+        continue
+    if d.name == "stand-source-keyboard" or "Camera" in d.name:
+        print(p)
+PY
+)
+HELD=$(printf '%s\n' "$HELD_ALL" | grep -Fxf <(printf '%s\n' "$STAND_NODES") | grep -c . || true)
+FOREIGN=$(comm -23 <(printf '%s\n' "$HELD_ALL") <(printf '%s\n' "$STAND_NODES" | sort))
+[ -n "$FOREIGN" ] && printf '%s\n' "$FOREIGN" | while read -r NODE; do
+    say "  held by another keyboard:" "$NODE $(cat /sys/class/input/${NODE##*/}/device/name 2>/dev/null)"
+done
+echo "  bypassed devices in the log: ${HITS:-0}, stand descriptors held: $HELD"
 [ "$HELD" = "1" ]; check "F1 a bypassed device is closed again (held=$HELD, source only)" "$?"
-[ "$HELD" != "1" ] && ls -l /proc/$FDPID/fd 2>/dev/null |
-    grep -oE "/dev/input/event[0-9]+" | sort | uniq -c | sed 's/^/  /'
+[ "$HELD" != "1" ] && printf '%s\n' "$STAND_NODES" | sed 's/^/  fixture: /'
 kill $FDPID $CAMPID $SPID3 2>/dev/null
 
 echo "--- 15. a keyboard that also reports absolute axes is still a keyboard (issue #12) ---"
