@@ -161,7 +161,6 @@
   "daemon.invalid_event_code": "!!! Invalid event code: {{.Code}}",
   "daemon.invalid_key": "Parse error: Invalid key for {{.Name}}: {{.Key}}",
   "daemon.ipc_listening": "IPC server listening on {{.Path}}",
-  "daemon.ipc_shutting_down": "Shutting down IPC server.",
   "daemon.ipc_start_failed": "IPC server failed to start: {{.Err}}",
   "daemon.list_devices_failed": "Events error: Unable to list devices: {{.Err}}",
   "daemon.new_input_device": "New input device: {{.Name}}",

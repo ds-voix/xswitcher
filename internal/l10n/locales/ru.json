@@ -161,7 +161,6 @@
   "daemon.invalid_event_code": "!!! Некорректный код события: {{.Code}}",
   "daemon.invalid_key": "Ошибка разбора: некорректная клавиша для {{.Name}}: {{.Key}}",
   "daemon.ipc_listening": "IPC-сервер слушает {{.Path}}",
-  "daemon.ipc_shutting_down": "Останавливаю IPC-сервер.",
   "daemon.ipc_start_failed": "IPC-сервер не удалось запустить: {{.Err}}",
   "daemon.list_devices_failed": "Ошибка событий: не удалось получить список устройств: {{.Err}}",
   "daemon.new_input_device": "Новое устройство ввода: {{.Name}}",
