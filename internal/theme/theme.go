@@ -17,17 +17,17 @@ import (
 )
 
 type jsonTheme struct {
-	Variant string            `json:"variant"`
-	Name    string            `json:"name"`
-	Colors  map[string]string `json:"colors"`
+	Variant string             `json:"variant"`
+	Name    string             `json:"name"`
+	Colors  map[string]string  `json:"colors"`
 	Sizes   map[string]float32 `json:"sizes"`
 }
 
 type customTheme struct {
-	base     fyne.Theme
-	name     string
-	colors   map[fyne.ThemeColorName]color.Color
-	sizes    map[fyne.ThemeSizeName]float32
+	base   fyne.Theme
+	name   string
+	colors map[fyne.ThemeColorName]color.Color
+	sizes  map[fyne.ThemeSizeName]float32
 }
 
 func (t *customTheme) Color(n fyne.ThemeColorName, v fyne.ThemeVariant) color.Color {
@@ -79,7 +79,9 @@ func Load(name string) (fyne.Theme, error) {
 		return fynetheme.LightTheme(), nil
 	}
 
-	if strings.ContainsAny(name, "/\\..") {
+	// A name may contain dots ("nord.v2" is a file the GUI itself lists), but it
+	// must not navigate: separators and a parent reference are rejected outright.
+	if strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") {
 		return nil, fmt.Errorf("theme %q: invalid name", name)
 	}
 	dir := userThemesDir()
