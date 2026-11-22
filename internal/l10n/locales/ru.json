@@ -1,6 +1,7 @@
 {
   "about.changes": "Автор изменений: {{.Value}}",
   "about.commit": "Коммит: {{.Value}}",
+  "about.donate": "Поддержать: {{.URL}}",
   "about.language_card": "Язык",
   "about.language_not_saved": "Применено, но не сохранено: {{.Err}}",
   "about.language_note": "Применяется к этому окну сразу. Встроенные кнопки Fyne (OK, Cancel и остальные) следуют локали процесса.",

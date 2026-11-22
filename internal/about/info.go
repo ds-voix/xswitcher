@@ -17,4 +17,7 @@ var (
 
 	// License is the project license identifier.
 	License string = "AGPL-3.0"
+
+	// DonateURL is where a reader can thank the person who produced the changes.
+	DonateURL string = "https://www.donationalerts.com/r/bahooo"
 )

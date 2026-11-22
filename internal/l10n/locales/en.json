@@ -1,6 +1,7 @@
 {
   "about.changes": "Changes by: {{.Value}}",
   "about.commit": "Commit: {{.Value}}",
+  "about.donate": "Donate: {{.URL}}",
   "about.language_card": "Language",
   "about.language_not_saved": "Applied, but not saved: {{.Err}}",
   "about.language_note": "Applies to this window at once. Fyne's own buttons (OK, Cancel, and the rest) follow the process locale.",

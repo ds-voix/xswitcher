@@ -26,6 +26,7 @@ func newAboutPanel(client *ipc.Client, onLanguage func(code string) string) fyne
 	changes := widget.NewLabel(l10n.X("about.changes", "Changes by: {{.Value}}", "Value", about.ChangesBy))
 	upstreamLink := widget.NewHyperlink(l10n.X("about.upstream", "Upstream: {{.URL}}", "URL", about.UpstreamURL), nil)
 	license := widget.NewLabel(l10n.X("about.license", "License: {{.Value}}", "Value", about.License))
+	donateLink := widget.NewHyperlink(l10n.X("about.donate", "Donate: {{.URL}}", "URL", about.DonateURL), nil)
 
 	for _, l := range []*widget.Label{version, commit, changes, license} {
 		l.Alignment = fyne.TextAlignCenter
@@ -57,6 +58,7 @@ func newAboutPanel(client *ipc.Client, onLanguage func(code string) string) fyne
 		upstreamLink,
 		widget.NewSeparator(),
 		license,
+		donateLink,
 		widget.NewSeparator(),
 		languageCard,
 		themeCard,

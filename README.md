@@ -351,5 +351,13 @@ attributed to upstream `5fe6e3a`, #5 defect + feature, #13/#1 no code changes). 
 
 - Upstream: <https://github.com/ds-voix/xswitcher>
 
+## Support
+
+The project is free and stays free. If the audit and the fixes in these commits are worth
+a coffee, the channels are listed in [`.github/wallets.md`](.github/wallets.md):
+DonationAlerts plus three crypto wallets (ETH, TON, BTC). Nothing in the project depends on
+it - no feature, no fix, no answer to an issue sits behind a paywall, and the Sponsor
+button keeps pointing at the upstream account.
+
 ## Conclusion
 Please, don't be shy to report the bug if something in this README looks unclear.
