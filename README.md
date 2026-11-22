@@ -147,9 +147,12 @@ You must install (libX11-devel | libx11-dev) package for X bindings.
 * The package name may, of course, be different in Your distro.  
 X calls are made through cgo, so a C compiler ("gcc" or "clang") must be present too.  
 And, of course, you must have the working go environment.  
-The module pins the toolchain exactly: `go 1.26.0` plus `toolchain go1.26.10`. That is not a style
-choice, it is what `govulncheck` reports: on go1.24.13 the scan finds 29 vulnerabilities reachable from
-this code (18 of them in the standard library), on go1.26.0 it still finds 28, and on go1.26.10 zero.
+The module pins the toolchain exactly: `go 1.26.0` plus `toolchain go1.26.11`. That is not a style
+choice: `govulncheck` traces into the standard library, so what survives depends on the patch release,
+not on this code. Measured on the CI runner on 2026-11-22 at the previous pin: go1.26.10 left one
+reachable standard-library advisory, GO-2026-6859 in `net/http`, which is fixed in go1.26.11. The scan
+stays a blocking gate, so the next drift in the advisory database fails the pipeline instead of making
+this paragraph quietly wrong.
 The stand images follow the same pin (`golang:1.26-trixie`), so a local run, the container and CI measure
 the same compiler.  
 Build from the repository root:

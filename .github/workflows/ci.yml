@@ -34,9 +34,16 @@ jobs:
       - uses: actions/checkout@v4
 
       # The module pins both the language version and the patch release: `go 1.26.0` and
-      # `toolchain go1.26.10`, because 18 of the findings govulncheck reports are in the standard
-      # library and clear only from go1.26.10 (measured: go1.24.13 = 29 findings, go1.26.0 = 28,
-      # go1.26.10 = 0). Reading go.mod keeps CI, the stand image and the local run on one toolchain.
+      # `toolchain go1.26.11`. The patch release belongs to this gate: govulncheck traces reach into
+      # the standard library, so the number of reachable findings is a measurement against the
+      # advisory database of the day, not a property of this code. Measured on this runner on
+      # 2026-11-22 (run 45061925006, toolchain go1.26.10): 1 reachable standard-library advisory,
+      # GO-2026-6859 -- "HTTP/1 server crash due to MaxBytesReader header race in net/http",
+      # reported as `Found in: net/http@go1.26.10`, `Fixed in: net/http@go1.26.11` -- plus 3 in
+      # imported packages and 1 in required modules, neither of which the code traces into.
+      # setup-go installs 1.26.0 from the `go` directive and the go command switches to the pinned
+      # patch release itself, which is why the scan names the patch release and not 1.26.0.
+      # Reading go.mod keeps CI, the stand image and the local run on one toolchain.
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod

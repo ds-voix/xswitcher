@@ -1,6 +1,6 @@
 # golang:1.26 rather than debian:trixie-slim + golang-go: the module pins go 1.26.0 / toolchain
-# go1.26.10 (measured with govulncheck: the standard-library findings clear only from 1.26.10), and
-# the Go shipped in the Debian archive is older than that.
+# go1.26.11 (the govulncheck gate goes red on any older patch release -- .github/workflows/ci.yml
+# carries the measurement next to the pin), and the Go shipped in the Debian archive is older than that.
 FROM golang:1.26-trixie
 
 # Build toolchain for xswitcher and the stand's observation tools -- from the same file the GUI image

@@ -2,7 +2,7 @@ module xswitcher
 
 go 1.26.0
 
-toolchain go1.26.10
+toolchain go1.26.11
 
 replace github.com/micmonay/keybd_event => ./src/keybd_event/
 
