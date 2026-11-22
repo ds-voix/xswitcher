@@ -1,3 +1,59 @@
+# build & dist output
+build/
+dist/
+*.exe
+*.dll
+
+# go.mod/go.sum are tracked upstream, so they must not be ignored here;
+# only the local module cache is noise.
 .gomodcache/
+
+# IDE / editors
+.idea/
+.vscode/*
+!.vscode/settings.json
+*.swp
+*.swo
+*~
+.DS_Store
+
+# temporary files
+tmp/
+.tmp/
 __pycache__/
 *.pyc
+
+# test coverage
+coverage/
+.nyc_output/
+coverage.xml
+coverage.html
+
+# Docker / container artifacts
+artifacts/
+gui-screenshot.png
+docker-build-*/
+
+# build-src is for local development only — not part of upstream release
+stand/build-src/
+
+# GUI app sources (local dev)
+stand/gui/
+
+# test fixtures and results
+stand/tests/*.pyc
+stand/tests/results/
+
+# Windows temp files
+tmp/*
+*.log
+
+# locally built GUI binary (go build ./cmd/gui), not a source file
+/gui
+
+# Locally built daemon and GUI binaries. bin/xswitcher was tracked once (3 465 232 bytes), and the
+# stand writes its own /w/bin/xswitcher-gui at run time, so the directory is output, never a source.
+/bin/
+
+# local planning notes and Cyrillic filenames, not part of the project
+/План*.md

@@ -1,0 +1,16 @@
+[Unit]
+Description=xswitcher language switcher
+Documentation=https://github.com/ds-voix/xswitcher
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+# The packaged config is /etc/xswitcher/xswitcher.conf, which is the daemon's default path, so no -c
+# here. The binary carries no setuid bit: it reads /dev/input as a member of the "input" group.
+ExecStart=/usr/bin/xswitcher
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

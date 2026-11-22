@@ -70,6 +70,7 @@ import (
 	"time"
 	"xswitcher/embeddedConfig"
 	"xswitcher/exec"
+	"xswitcher/internal/about"
 	cfg "xswitcher/internal/config"
 	"xswitcher/internal/ipc"
 	"xswitcher/internal/l10n"
@@ -131,6 +132,9 @@ var (
 
 	test_mode bool
 	TEST_MODE *bool = &test_mode
+
+	version_only bool
+	VERSION      *bool = &version_only
 
 	// Config
 	ScanDevices   TScanDevices
@@ -257,6 +261,13 @@ var (
 
 const winBufMax = 32 // LRU cap: a daemon running for months must not keep every closed window
 
+// versionStamp is the machine-readable build line printed by --version: "xswitcher <Version>
+// (<Commit>)". Both halves come from -ldflags (internal/about), so an unstamped build is visible as
+// "dev (unknown)" instead of looking like a release.
+func versionStamp() string {
+	return fmt.Sprintf("xswitcher %s (%s)", about.Version, about.Commit)
+}
+
 func config() {
 	var (
 		conf_ []byte
@@ -276,8 +287,18 @@ func config() {
 	DEBUG = F.BoolP("debug", "d", *DEBUG, "Debug log level")
 	VERBOSE = F.BoolP("verbose", "v", *VERBOSE, "Increase log level to NOTICE")
 	TEST_MODE = F.BoolP("test", "t", *TEST_MODE, "Only output all key events to STDERR. No actions.")
+	VERSION = F.BoolP("version", "", false, "Print the build stamp and exit")
 	F.Init("", flag.ExitOnError)
 	F.Parse(os.Args[1:])
+
+	// Answer before anything else happens: the release pipeline runs this on the shipped asset, as
+	// an ordinary user, with no /etc/xswitcher/xswitcher.conf and no root, to prove the binary was
+	// built from the tag it is published under.
+	if *VERSION {
+		fmt.Println(versionStamp())
+		os.Exit(0)
+	}
+
 	// Publish the effective path for the IPC config handlers below.
 	CONFIG_PATH = *config_path
 

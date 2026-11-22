@@ -1,0 +1,115 @@
+name: ci
+
+# The five gates a release artefact is built on. They run on every push and every pull request,
+# because the point of each of them is that it has already been green before a tag exists:
+#   1. go build (with the stamp the release would carry)
+#   2. go vet
+#   3. go test (every package, including cmd/gui)
+#   4. gofmt over the tracked sources
+#   5. govulncheck
+# Then the stamp is read back off the binary, which is the only way to prove that the file, not the
+# log line, carries the commit it is announced under (the flag exists since bc439b0 for this).
+
+on:
+  push:
+    branches: ["main", "feature/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    runs-on: ubuntu-24.04
+    # Named rather than inherited. This gate step expands `${GITHUB_SHA::7}`, which is a bash-only
+    # substitution, and the release job proved on 2026-10-26 what happens when the shell of a `run:` step
+    # is left to the default: the step ran under `sh -e {0}` and died with "Bad substitution" (exit 2).
+    # This job is not in a container, so bash was already the default here -- the line is what keeps the
+    # two files stating the same thing instead of one of them gambling on a default.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      # The module pins both the language version and the patch release: `go 1.26.0` and
+      # `toolchain go1.26.10`, because 18 of the findings govulncheck reports are in the standard
+      # library and clear only from go1.26.10 (measured: go1.24.13 = 29 findings, go1.26.0 = 28,
+      # go1.26.10 = 0). Reading go.mod keeps CI, the stand image and the local run on one toolchain.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Not one of the five gates, but the cheapest way to learn that a workflow file cannot start.
+      # A `run: |` block may not contain a line at column zero, and a nested `python3 - <<PY` heredoc
+      # puts its body there: PyYAML rejects such a file with "while scanning a simple key" and Actions
+      # simply refuses to run the workflow. This was written after stand.yml was drafted with exactly
+      # that heredoc -- only the live parse caught it, so the parse became a step.
+      - name: workflow files parse as YAML
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends python3-yaml
+          python3 -c "import yaml,glob; files=glob.glob('.github/workflows/*.yml')+['.goreleaser.yaml']; [yaml.safe_load(open(f)) for f in files]; print('YAML parsed ok over', len(files), 'files')"
+
+      # The same file stand/Dockerfile.gui installs from, so a missing build header cannot be green
+      # in one of the two environments only.
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          grep -v '^#' stand/apt-deps.txt | xargs -r sudo apt-get install -y --no-install-recommends
+
+      # gofmt counts line endings, and a Windows checkout with core.autocrlf=true hands the working
+      # files over with CRLF, which made `gofmt -l src/` list the whole directory. *.go is pinned to
+      # LF in .gitattributes, and the list is taken from git rather than from the filesystem so that
+      # anything ignored (the module cache, the stand's local copies) stays out of the gate.
+      - name: gofmt
+        run: |
+          files=$(git ls-files '*.go')
+          # shellcheck disable=SC2086
+          bad=$(gofmt -l $files)
+          if [ -n "$bad" ]; then
+            echo "not formatted:"; echo "$bad"
+            exit 1
+          fi
+          echo "gofmt clean over $(echo "$files" | wc -l) files"
+
+      - name: go build
+        run: go build -o /tmp/xswitcher ./src/
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test -count=1 ./...
+
+      # The artefact has to answer for itself which commit it came from. VERSION is what a tag would
+      # carry; on a branch push there is no tag yet, so the ref name is used and still asserted.
+      - name: build stamp matches this commit
+        run: |
+          COMMIT="${GITHUB_SHA::7}"
+          VERSION="${GITHUB_REF_NAME}"
+          go build -ldflags "-s -w -X xswitcher/internal/about.Version=$VERSION -X xswitcher/internal/about.Commit=$COMMIT" \
+            -o /tmp/xswitcher-stamped ./src/
+          got=$(/tmp/xswitcher-stamped --version)
+          want="xswitcher $VERSION ($COMMIT)"
+          if [ "$got" != "$want" ]; then
+            echo "stamp mismatch: got [$got] want [$want]"
+            exit 1
+          fi
+          # --help exits with status 2 (that is what the flag package does), and Actions runs every
+          # step with `bash -e -o pipefail`, so the exit code has to be absorbed before the grep.
+          help=$(/tmp/xswitcher-stamped --help 2>&1 || true)
+          echo "$help" | grep -q -- "--version"
+          echo "stamp verified: $got"
+
+      # Pinned deliberately. Two versions were run on this tree: v1.1.3 (on go1.24.13) reported the
+      # findings and v1.9.0 (on go1.26.10) reported zero, which is the colour this gate is expected to
+      # have. The advisory database is fetched at run time, so the pin does not stale the check, while
+      # a moving @latest can start demanding a newer Go than the module pins and turn the gate red for
+      # a reason that has nothing to do with the code.
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          "$(go env GOPATH)/bin/govulncheck" ./...

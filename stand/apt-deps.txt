@@ -1,0 +1,53 @@
+# === stand/apt-deps.txt ===
+# One source of truth for the system packages the stand and CI need. Every reader is listed, because
+# the point of the file is that a missing header is missing in exactly one place:
+#   stand/Dockerfile      -- the rig image, through COPY + xargs (since 0b97060; it used to carry its own
+#                            shorter list, and that is what made check B3 red)
+#   stand/Dockerfile.gui  -- the GUI stand image, same COPY + xargs shape
+#   .github/workflows/ci.yml, .github/workflows/stand.yml, .github/workflows/release.yml
+#                          -- the `System dependencies` step of each, through grep | xargs
+# One package per line; lines starting with "#" and empty lines are ignored by the readers.
+
+# The display server and the browser bridge the GUI stand runs on.
+xvfb
+x11vnc
+novnc
+websockify
+
+# Observers the stand drives: xprop/xwininfo, setxkbmap, geometry and focus, screenshots,
+# the uinput hand (python3-evdev).
+x11-utils
+x11-xkb-utils
+xdotool
+imagemagick
+python3-evdev
+
+# Console and trust plumbing.
+kbd
+xterm
+ca-certificates
+
+# cgo toolchain and the X headers cmd/gui (Fyne), stand/echo.c and stand/bridge.c are built
+# against. This set was measured with `dpkg -l` inside the working VNC slot on 2026-10-15, not
+# guessed: the base image ships gcc and X headers but not these -dev packages.
+gcc
+pkg-config
+libxtst-dev
+libx11-dev
+libxext-dev
+libxmu-dev
+libxrender-dev
+libxfixes-dev
+libxi-dev
+libxrandr-dev
+libxinerama-dev
+libxcursor-dev
+libxxf86vm-dev
+libxft-dev
+libfontconfig-dev
+libxkbcommon-dev
+libgl1-mesa-dev
+
+# The layouts themselves: xkb-data carries the rules that the stand's
+# `setxkbmap -layout us,ru,de` resolves against.
+xkb-data

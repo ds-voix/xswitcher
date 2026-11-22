@@ -24,9 +24,9 @@ TOTAL=0
 # "ALL GREEN" is only meaningful together with the number of checks behind it: a phase
 # that aborts early (or gets commented out while debugging) must not look like a pass.
 # Keep this in sync with the number of check() calls below
-# (14 lifecycle/stream + 4 SEQ tail + 29 X11 branch + 6 single-reader + 1 descriptor + 3 clipboard
+# (14 lifecycle/stream + 2 Wayland bypass + 4 SEQ tail + 29 X11 branch + 6 single-reader + 1 descriptor + 3 clipboard
 # hook + 4 BLE-like keyboard with EV_ABS).
-EXPECT=61
+EXPECT=63
 
 say() { printf '%-46s %s\n' "$1" "${2:-}"; }
 check() { # check <name> <0|1>
@@ -138,6 +138,17 @@ grep -Eq "^  /dev/input/event[0-9]+:\s*keybd interface" "$LOG"; SELF_ATTACHED=$?
 echo "--- 8. assertions: emitted key stream ---"
 [ -s "$TSV" ] || { say "TSV empty -- sniffer log:"; tail -3 /tmp/sniff.log | sed 's/^/  /'; FAILED=1; }
 python3 stand/analyze.py "$TSV" "H,E,L,L,O" 2; check "E-series key-stream checks" "$?"
+# The config this phase runs on is the shipped one, so the stream above IS the Wayland bypass: no
+# XkbLockGroup, only the replayed desktop shortcut. Measured on 23.10 at 30e4f94 on a private slot:
+# 125:1 3:1 3:0 125:0 (L_META+2, i.e. [Wayland] Layout1), then 5 BackSpace, then H,E,L,L,O emitted as
+# the very same evdev codes -- the daemon never re-encodes the letters into Cyrillic, the layout is
+# the desktop environment's job. That is also why the shipped Layout0/Layout1 (Win+1/Win+2) must match
+# the real DE shortcut: on GNOME the default is Super+Space, and then the wipe and the replay happen
+# while the layout stays where it was.
+XKB_CALLS=$(grep -c "XkbLockGroup" "$LOG")
+[ "$XKB_CALLS" = "0" ]; check "W1 the bypass branch never called XkbLockGroup (saw $XKB_CALLS)" "$?"
+grep -qF "sendKeySequence: [L_META:1 2:1 2:0 L_META:0]" "$LOG"
+check "W2 the replayed shortcut is the config's Layout1" "$?"
 
 echo "--- 9. focus blip in the middle of a word (P1-3) ---"
 gcc stand/mkwin.c -o /tmp/mkwin -lX11 >/tmp/mkwin_build.log 2>&1; MKWIN_BUILD=$?

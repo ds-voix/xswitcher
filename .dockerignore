@@ -1,0 +1,7 @@
+# === .dockerignore ===
+# The GUI stand mounts the checkout at /w and copies out of it exactly one file — the package list —
+# so the build context is a whitelist, not a blacklist. Without this file every build would first
+# upload the whole tree (`.gomodcache` alone is gigabytes, `tmp/` and `Python/` add more), and the
+# question "what does a rebuild of this image cost" would stop having an answer.
+*
+!stand/apt-deps.txt
