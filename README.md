@@ -126,7 +126,7 @@ Then, in "xswitcher.conf":
      Delay = 50
 
 * It takes about 50 ms to complete switching the keyboard layout in my KDE, so I set 50 as the default value.
-* Up to 4 language shortcuts "Layout0"�"Layout3".
+* Up to 4 language shortcuts "Layout0"…"Layout3".
 
 ## Packaging
 I don't have enough time to maintain any distro package (rpm, dpkg, etc.).  
