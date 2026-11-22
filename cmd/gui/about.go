@@ -1,6 +1,6 @@
 // Package main — see main.go for overview.
 // about.go provides the About dialog panel with build-time metadata,
-// maintainer info, and project links.
+// attribution and project links.
 package main
 
 import (
@@ -14,19 +14,18 @@ import (
 )
 
 // newAboutPanel creates the About tab content showing version, commit,
-// maintainer, and project URLs.
+// attribution and project URLs.
 func newAboutPanel() fyne.CanvasObject {
 	title := widget.NewLabelWithStyle("xswitcher GUI", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
 	version := widget.NewLabel(fmt.Sprintf("Version: %s", about.Version))
 	commit := widget.NewLabel(fmt.Sprintf("Commit: %s", about.Commit))
-	maintainer := widget.NewLabel(fmt.Sprintf("Maintainer: %s", about.Maintainer))
-	forkLink := widget.NewHyperlink("Fork: "+about.ForkURL, nil)
+	changes := widget.NewLabel(fmt.Sprintf("Changes by: %s", about.ChangesBy))
 	upstreamLink := widget.NewHyperlink("Upstream: "+about.UpstreamURL, nil)
 	license := widget.NewLabel(fmt.Sprintf("License: %s", about.License))
 
 	version.Alignment = fyne.TextAlignCenter
 	commit.Alignment = fyne.TextAlignCenter
-	maintainer.Alignment = fyne.TextAlignCenter
+	changes.Alignment = fyne.TextAlignCenter
 	license.Alignment = fyne.TextAlignCenter
 
 	return container.NewVBox(
@@ -34,8 +33,7 @@ func newAboutPanel() fyne.CanvasObject {
 		version,
 		commit,
 		widget.NewSeparator(),
-		maintainer,
-		forkLink,
+		changes,
 		upstreamLink,
 		widget.NewSeparator(),
 		license,

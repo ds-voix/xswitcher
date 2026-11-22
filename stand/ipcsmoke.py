@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Live IPC smoke against a running daemon (stand/smoke.sh brings the whole
-# environment up). Covers GUI-PLAN-PUNTO.md Phases 0-4 over the real unix
+# environment up). Covers the Punto-parity phases 0-4 over the real unix
 # socket: ping/status, get_config/set_config/validate, comment preservation,
 # rejection of an invalid mod, dotted paths into [Action.*] tables, the
 # whole-array rewrite of [[WindowClasses]], the AutoReplace/Hotkeys arrays,

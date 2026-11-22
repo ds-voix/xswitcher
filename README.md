@@ -132,13 +132,13 @@ Then, in "xswitcher.conf":
 I don't have enough time to maintain any distro package (rpm, dpkg, etc.).  
 But it seems to be a good deed. So, everybody who is ready to do this job is welcome.
 
-## About / Maintainer
+## Attribution
 
-This fork is maintained by **BaHooo** (bahooo22).
-The audit, fixes and regression guards shipped on the `fix/code-audit-and-issues` branch were produced as a stacked PR against upstream `ds-voix/xswitcher`; the branch commits carry per-issue verdicts (#14 fixed here, #12 guarded and attributed to upstream `5fe6e3a`, #5 defect + feature, #13/#1 no code changes).
+This section documents who produced the work, not who owns the project. The audit, fixes and
+regression guards in these commits were produced as a stacked PR against upstream
+`ds-voix/xswitcher`; the commits carry per-issue verdicts (#14 fixed here, #12 guarded and
+attributed to upstream `5fe6e3a`, #5 defect + feature, #13/#1 no code changes). Changes by BaHooo.
 
-- GitHub: <https://github.com/bahooo22>
-- Fork / working branch: <https://github.com/bahooo22/xswitcher/tree/fix/code-audit-and-issues>
 - Upstream: <https://github.com/ds-voix/xswitcher>
 
 ## Conclusion

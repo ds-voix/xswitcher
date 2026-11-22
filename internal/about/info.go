@@ -9,11 +9,8 @@ var (
 	// Commit is the short git commit hash.
 	Commit string = "unknown"
 
-	// Maintainer is the current maintainer of this fork.
-	Maintainer string = "BaHooo (bahooo22)"
-
-	// ForkURL is the GitHub URL of this fork.
-	ForkURL string = "https://github.com/bahooo22/xswitcher"
+	// ChangesBy names who produced the changes carried by this tree.
+	ChangesBy string = "BaHooo (bahooo22)"
 
 	// UpstreamURL is the GitHub URL of the original project.
 	UpstreamURL string = "https://github.com/ds-voix/xswitcher"
