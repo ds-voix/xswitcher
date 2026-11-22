@@ -329,13 +329,18 @@ both measured inside the built `.deb`), a path from typed text to code execution
 the config, an escape across the socket, and a reachable dependency finding that `govulncheck` misses.
 
 ## Packaging
-Upstream asked for somebody to maintain distro packages; the pipeline here does it for Linux: `.github/workflows/release.yml`
-runs goreleaser on a `v*` tag and publishes a portable `tar.gz`, a `.deb` and an `.rpm` for amd64 and arm64,
-with `checksums.txt`. The recipe lives in `.goreleaser.yaml`, the systemd unit in
-`packaging/systemd/user/xswitcher.service` and the post-install notice in `packaging/scripts/post-install.sh`.
-The whole set was built and inspected locally with `goreleaser release --snapshot --clean`: 6 assets, both
-binaries inside each package at `0755 root:root`, `rpm -qp -R` reporting `glibc, libX11, libxkbcommon,
-mesa-libGL`, and the packaged daemon answering `xswitcher v1.0 (2fc2441)` to `--version`.
+I don't have enough time to maintain any distro package (rpm, dpkg, etc.).  
+But it seems to be a good deed. So, everybody who is ready to do this job is welcome.
+
+The two lines above are the author's own words and are left untouched; the offer in them is
+what this slice answers, and it answers it for Linux only. `.github/workflows/release.yml` runs
+goreleaser on a `v*` tag and publishes a portable `tar.gz`, a `.deb` and an `.rpm` for amd64 and
+arm64, with `checksums.txt`. The recipe lives in `.goreleaser.yaml`, the systemd unit in
+`packaging/systemd/user/xswitcher.service` and the post-install notice in
+`packaging/scripts/post-install.sh`. The whole set was built and inspected locally with
+`goreleaser release --snapshot --clean`: 6 assets, both binaries inside each package at
+`0755 root:root`, `rpm -qp -R` reporting `glibc, libX11, libxkbcommon, mesa-libGL`, and the
+packaged daemon answering `xswitcher v1.0 (2fc2441)` to `--version`.
 
 ## Attribution
 
