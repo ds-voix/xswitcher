@@ -78,8 +78,6 @@ import (
 	"github.com/fsnotify/fsnotify"      // inotify on /dev/input/
 	// Deal with clipboard
 	"golang.design/x/clipboard"
-
-	"log/syslog" // Debug for respawn under systemd
 )
 
 // Config
@@ -255,8 +253,6 @@ var (
 	DOWN = make(map[uint16] int) // In any case, all virtual keys MUST BE RELEASED at the end of retyping.
 
 	clipboardOk = false
-
-	SYSLOG *syslog.Writer
 )
 
 func config() {
@@ -1085,12 +1081,12 @@ func Exec(A *TAction) {
 	// UID & GID
 	user_, err := user.Lookup(A.UID)
 	if err != nil {
-		fmt.Sprintf("Exec: user \"%s\" invalid: %v", A.UID, err)
+		fmt.Printf("Exec: user \"%s\" invalid: %v", A.UID, err)
 		return
 	}
 	u64, err := strconv.ParseUint(user_.Uid, 10, 32)
 	if err != nil {
-		fmt.Sprintf("Exec: non-integer uid! Is it linux?")
+		fmt.Printf("Exec: non-integer uid! Is it linux?")
 		return
 	}
 	c.UID = uint32(u64)
@@ -1099,13 +1095,13 @@ func Exec(A *TAction) {
 	if len(A.GID) > 0 {
 		group, err := user.LookupGroup(A.GID)
 		if err != nil {
-			fmt.Sprintf("Exec: group \"%s\" invalid: %v", A.GID, err)
+			fmt.Printf("Exec: group \"%s\" invalid: %v", A.GID, err)
 		}
 		gid = group.Gid
 	}
 	g64, err := strconv.ParseUint(gid, 10, 32)
 	if err != nil {
-		fmt.Sprintf("Exec: non-integer gid! Is it linux?")
+		fmt.Printf("Exec: non-integer gid! Is it linux?")
 		return
 	}
 	c.GID= uint32(g64)
@@ -1499,8 +1495,6 @@ func serve() {
 }
 
 func main() {
-	SYSLOG, _ = syslog.New(syslog.LOG_DEBUG | syslog.LOG_DAEMON, "xswitcher") // M.b. NULL pointer, in case of some error
-	SYSLOG.Warning("1")
 	var err error
 	defer func() { // Report panic, if one occured
 		if *DEBUG { return } // StackTrace is only interesting along debug
@@ -1508,7 +1502,6 @@ func main() {
 			fmt.Printf("%v\n", r)
 		}
 	}()
-	SYSLOG.Warning("2")
 
 	// Hooks hashtable
 	ACTIONS["DropBuffers"] = DropBuffers // Drop all buffers
@@ -1520,24 +1513,18 @@ func main() {
 	ACTIONS["TypeClipboard"] = typeClipboard // Try to type the text from clipboard to virtual keyboard
 	ACTIONS["Exec"] = Exec
 
-	SYSLOG.Warning("3")
 	config() // Parse config
-	SYSLOG.Warning("4")
 	sequences() // Compile expressions
-	SYSLOG.Warning("5")
 	keys() // Initialize key actions
 
-	SYSLOG.Warning("6")
 	connectEvents("") // Start keyloggers
 
-	SYSLOG.Warning("7")
 	// Attach virtual keyboard
 	kb, err = keybd_event.NewKeyBonding()
 	if err != nil {
 		panic(fmt.Sprintf("Virtual keyboard error: %s", err))
 	}
 
-	SYSLOG.Warning("8")
 	// Create new inotify watcher.
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -1545,7 +1532,6 @@ func main() {
 	}
 	defer watcher.Close()
 
-	SYSLOG.Warning("9")
     go func() {
 		for {
 			select {
@@ -1569,13 +1555,11 @@ func main() {
 		}
 	}()
 
-	SYSLOG.Warning("10")
 	// inotify on "/dev/input"
 	err = watcher.Add("/dev/input")
 	if err != nil {
 		panic(fmt.Sprintf("Inotify error in Add(\"/dev/input\"): %s", err))
 	}
 
-	SYSLOG.Warning("11")
 	serve() // Main loop
 }
