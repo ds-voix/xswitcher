@@ -116,7 +116,7 @@ type TWindowClass struct {
 }
 
 type TActions struct {
-	SeqLength int    `default:8`
+	SeqLength int    `default:"8"`
 	WordChars string `default:"(^([0-9A-Z=-]|GRAVE|APOSTROPHE|SEMICOLON|[LR]_BRACE|COMMA|DOT|(BACK)?SLASH|KP[0-9]):0$)"`
 	WordHead string  `default:"(^([0-9A-Z]|GRAVE|APOSTROPHE|SEMICOLON|[LR]_BRACE|COMMA|DOT|(BACK)?SLASH|KP[0-9]):1$)"`
 	NewWord []string
@@ -1485,7 +1485,7 @@ func Exec(A *TAction) {
 	var c exec.Command;
 	args, err := shellquote.Split(A.Exec)
 	if err != nil {
-		fmt.Printf("Exec error: %s", err.Error)
+		fmt.Printf("Exec error: %s", err.Error())
 		return
 	}
 
@@ -2080,7 +2080,7 @@ func main() {
 					fmt.Printf("***WTF***: read(watcher.Errors) != ok\n")
 					continue
 				}
-				fmt.Printf("watcher error:", err)
+				fmt.Printf("watcher error: %v\n", err)
 			}
 		}
 	}()
