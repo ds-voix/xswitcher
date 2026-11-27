@@ -1,0 +1,134 @@
+name: release
+
+# Publishes the release assets on a `v*` tag: portable tar.gz, .deb and .rpm for amd64 and arm64,
+# plus checksums.txt. The recipe is .goreleaser.yaml; this file only prepares an environment where
+# that recipe can run.
+#
+# The job runs inside golang:1.26-trixie on purpose. The daemon and the GUI are cgo binaries, and the
+# arm64 ones need `:arm64` development packages, which Ubuntu's default archive does not carry: the
+# multiarch set was installed and measured in Debian trixie (this is the same base the stand image
+# uses), not on the runner's own apt state.
+#
+# `defaults.run.shell` is not decoration. The dispatched run of 2026-10-26 (run 40337112942) died in the
+# stamp step with `/__w/_temp/….sh: 1: Bad substitution` and exit code 2, and the log named the shell it
+# had used: `sh -e {0}`. So a container step does not inherit the runner's bash, even though the image
+# ships it (`command -v bash` inside golang:1.26-trixie answers /usr/bin/bash), and the documented
+# fallback for a step whose shell was never stated is `sh`. Measured on the same line both ways:
+# `COMMIT="${GITHUB_SHA::7}"` under `sh -e` exits 2, under `bash --noprofile --norc -eo pipefail` it
+# exits 0. Naming the shell is what makes the `${VAR::7}` in these steps a fact instead of a gamble.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: build everything and skip the publish step
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    container:
+      image: golang:1.26-trixie
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # goreleaser reads the tag history to build the changelog; a shallow clone loses it and the
+          # release comes out with an empty body.
+          fetch-depth: 0
+          # The tag itself is fetched by ref, and `fetch-tags` defaults to false -- `fetch-depth: 0` does
+          # not imply it. Measured in a clone made without tags: `git tag -l` is empty and
+          # `git describe --tags --abbrev=0` answers "fatal: No names found, cannot describe anything.",
+          # which is exactly how the first release run of v1.1.0 lost its version string.
+          fetch-tags: true
+
+      - name: Make git trust the workspace
+        # The container runs these steps as root while actions/checkout leaves the tree owned by the
+        # runner's uid, and git 2.47 refuses to read a repository it does not trust. Measured as exactly
+        # that shape (root building a copy owned by uid 1001): `go build` answers
+        # "error obtaining VCS status: exit status 128 / Use -buildvcs=false to disable VCS stamping" and
+        # exits 1; after this one config line the same build exits 0 and `--version` prints
+        # "xswitcher main (53f155a)". `-buildvcs=false` would also silence it and is the wrong fix: the
+        # stamp step and goreleaser's changelog both read git on purpose, and a build that stopped
+        # reading it would publish a release that cannot say which commit it came from.
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: System dependencies
+        # One package list for both environments: stand/apt-deps.txt is what the stand image installs,
+        # and the cross set is derived from it -- every -dev entry mirrored to :arm64, plus the cross
+        # compiler and the arm64 libc headers (measured: without libc6-dev:arm64 the cgo build dies on
+        # "bits/wordsize.h: No such file or directory").
+        run: |
+          apt-get update
+          grep -v '^#' stand/apt-deps.txt | grep -v '^[[:space:]]*$' \
+            | xargs -r apt-get install -y --no-install-recommends
+          dpkg --add-architecture arm64
+          apt-get update
+          CROSS=$(grep -v '^#' stand/apt-deps.txt | grep -v '^[[:space:]]*$' | grep -- '-dev$' | sed 's/$/:arm64/' | tr '\n' ' ')
+          echo "cross set: gcc-aarch64-linux-gnu libc6-dev:arm64 $CROSS"
+          # shellcheck disable=SC2086
+          apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu "libc6-dev:arm64" $CROSS
+
+      - name: Verify the stamp this release will carry
+        # The same assertion ci.yml makes on every push, repeated against the tag, and built from the same
+        # variable names on purpose. `git describe --tags` was the first version of this line and it made
+        # the step depend on whether the runner happened to fetch tags: with an empty description the
+        # binary carried an empty version, and the loose case pattern still matched "xswitcher v...". Here
+        # the tag name comes from the event, and the comparison is exact, so a version that never reached
+        # the binary cannot pass as a stamp that did.
+        run: |
+          COMMIT="${GITHUB_SHA::7}"
+          VERSION="${GITHUB_REF_NAME}"
+          # A tag push has to carry a tag in the stamp. Without this the comparison below would still pass
+          # for an empty VERSION, because both sides are built from the same variable -- a gate that cannot
+          # fail is not a gate. workflow_dispatch is the dry run and has no tag, so it is exempt.
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            case "$VERSION" in
+              v*) ;;
+              *) echo "a tag push must carry a v* ref, got [$VERSION]"; exit 1;;
+            esac
+          fi
+          go build -ldflags "-s -w -X xswitcher/internal/about.Version=$VERSION -X xswitcher/internal/about.Commit=$COMMIT" \
+            -o /tmp/xd ./src/
+          got=$(/tmp/xd --version)
+          want="xswitcher $VERSION ($COMMIT)"
+          if [ "$got" != "$want" ]; then
+            echo "stamp mismatch: got [$got] want [$want]"
+            exit 1
+          fi
+          echo "stamp verified: $got"
+
+      - name: goreleaser
+        # Two flags, two different reasons. `--skip=publish` is the dry run the `dry_run` input promises.
+        # `--snapshot` is not a preference: measured on a tree with a remote and no tag (exactly the state
+        # of `main`), `goreleaser release --clean --skip=publish` exits 1 with
+        # "git doesn't contain any tags - either add a tag or use --snapshot" -- so every manual run died
+        # before building anything. With `--snapshot` the same tree exits 0 and stamps the binary
+        # `xswitcher v0.0.0 (<sha>)`, which cannot be mistaken for a release, and the real path (a `v*` tag
+        # push) is left untouched: there the second expression is empty, and that path was measured end to
+        # end on a tag -- deb, rpm and tar.gz for amd64 and arm64 plus checksums.txt, 3m16s, exit 0.
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: v2.19.0
+          args: release --clean ${{ github.event.inputs.dry_run == 'true' && '--skip=publish' || '' }} ${{ github.event_name != 'push' && '--snapshot' || '' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload the assets built by this run
+        # `--skip=publish` is what a dry run means, and without this step a dry run would build
+        # everything and keep nothing: there would be no asset to inspect afterwards. A tagged run
+        # publishes through goreleaser itself, so the artifact here is the extra copy CI leaves
+        # behind, named by commit so the two paths cannot be confused.
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ github.sha }}
+          path: dist/**
+          if-no-files-found: error

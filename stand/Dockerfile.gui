@@ -1,0 +1,47 @@
+# === stand/Dockerfile.gui ===
+# The GUI stand: Xvfb + noVNC + the toolchain the stand builds and runs itself.
+#
+#   build context = the repository root, narrowed by .dockerignore to the single file COPYed
+#   below; the sources themselves are mounted at /w, never copied:
+#       docker build -f stand/Dockerfile.gui -t xswitcher-gui-stand .
+#   or, with the compose file:
+#       cd stand && docker compose -f docker-compose.gui.yml up --build
+#
+# One stage on purpose. stand/gui-stand.sh compiles the daemon, the GUI and the three C
+# helpers from the checkout it is pointed at, because the point of the stand is to look at a
+# specific commit: an image with the binaries baked in would silently test an older build.
+# The repository is bind-mounted at /w by docker-compose.gui.yml.
+FROM golang:1.26-trixie
+
+# The package list is a file, not a copy of a list: stand/apt-deps.txt is read by this image and by
+# .github/workflows/ci.yml, so a missing build header is fixed in one place and cannot drift. The
+# set itself was measured with `dpkg -l` inside the working VNC slot on 2026-10-15. `tr -d '\r'`
+# is not decoration: a Windows checkout with core.autocrlf=true hands this file over with CRLF, and
+# xargs would then ask apt for "xvfb\r" and fail with a message that looks like a missing package.
+COPY stand/apt-deps.txt /tmp/apt-deps.txt
+
+RUN apt-get update \
+    && tr -d '\r' < /tmp/apt-deps.txt | grep -v '^#' | xargs -r apt-get install -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/* /tmp/apt-deps.txt
+
+WORKDIR /w
+
+# The display the stand uses; keep it private, uinput is shared by the whole kernel of the
+# Docker VM, so two stands on one display would read each other's keyboards.
+ENV DISPLAY=:96 \
+    GUISTAND_DISPLAY=96 \
+    XSWITCHER_SOCK=/tmp/guistand.sock \
+    GOFLAGS=-buildvcs=false
+
+EXPOSE 6081
+
+# Xvfb + the VNC bridge stay up for the life of the container; the checks themselves are run
+# with:  docker exec xswitcher-gui-stand bash /w/stand/gui-stand.sh
+# The display number is taken from GUISTAND_DISPLAY, not from DISPLAY: stand/gui-stand.sh derives
+# its own DISPLAY from GUISTAND_DISPLAY, so a container started with -e GUISTAND_DISPLAY=97 has to
+# get its Xvfb and x11vnc on :97 too, otherwise the stand looks for a server nobody started.
+CMD ["bash", "-c", "X=:${GUISTAND_DISPLAY:-96}; export DISPLAY=$X; \
+     Xvfb $X -noreset -screen 0 1280x1024x24 >/tmp/xvfb.log 2>&1 & \
+     sleep 1 && x11vnc -display $X -forever -shared -nopw -rfbport 5900 -bg >/tmp/x11vnc.log 2>&1 && \
+     websockify --web=/usr/share/novnc 6081 localhost:5900 >/tmp/websockify.log 2>&1 & \
+     tail -f /dev/null"]

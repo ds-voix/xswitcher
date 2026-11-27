@@ -66,7 +66,7 @@ func initKeyBD() error {
 	}
 	keyEventSet()
 	uidev := uinput_user_dev{}
-	for i, c := range "keybd interface" {
+	for i, c := range DeviceName {
 		uidev.name[i] = C.char(c)
 	}
 	uidev.id.bustype = C.BUS_USB
@@ -85,7 +85,7 @@ func initKeyBD() error {
 	return nil
 }
 
-//actualy don't use
+// actualy don't use
 func destroyLinuxUInput() {
 	syscall.Syscall(syscall.SYS_IOCTL, fd.Fd(), _UI_DEV_DESTROY, 0)
 	fd.Close()

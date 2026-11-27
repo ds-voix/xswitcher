@@ -1,0 +1,20 @@
+# Go sources go through gofmt, which counts line endings: on a Windows checkout with
+# core.autocrlf=true `gofmt -l src/` lists every file in the directory (the working
+# src/xswitcher.go carried 2138 CR characters while the index held CR=0), so the gate cannot tell a
+# real formatting defect from a checkout artifact. Pinned to LF the same way the stand scripts are.
+*.go text eol=lf
+# The stand runs inside a Linux container: bash and python choke on CRLF.
+stand/*.sh text eol=lf
+stand/*.py text eol=lf
+stand/Dockerfile text eol=lf
+stand/*.c text eol=lf
+# The build reads these two as data: apt-deps.txt is piped into xargs, so a stray CR would turn a
+# package name into one apt cannot find, and Dockerfile.gui is parsed line by line. On a Windows
+# checkout with core.autocrlf=true the working copy would otherwise arrive with CRLF.
+stand/Dockerfile.gui text eol=lf
+stand/apt-deps.txt text eol=lf
+.dockerignore text eol=lf
+# Same class as the stand scripts: dpkg and rpm run post-install.sh verbatim, and systemd reads the unit
+# file the same way. A Windows checkout with core.autocrlf=true would otherwise hand both over with CRLF.
+packaging/scripts/*.sh text eol=lf
+packaging/systemd/*/*.service text eol=lf
