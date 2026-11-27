@@ -14,6 +14,12 @@ import (
 	"time"
 )
 
+// defaultMaxReply bounds how many bytes of a command's stdout/stderr we keep. The Command.max_reply
+// field is unexported and the only caller never assigns it, so without a fallback io.CopyN(dst, src, 0)
+// copied zero bytes and every Exec action reported empty output. 64 KiB is enough to show a useful
+// reply while a chatty child cannot grow our buffers without limit.
+const defaultMaxReply = 1 << 16
+
 type Command struct {
 	id string        // Sequence ID may be set. Othewise, it is auto-generated.
 	no_exec bool
@@ -84,8 +90,17 @@ func ExecCommand(c *Command) (*Result) {
 	stdout := io.Writer(&_stdout)
 	stderr := io.Writer(&_stderr)
   	if ! c.No_wait { // Otherwise, just fork process with /dev/null at stdout&stderr.
-		stdoutIn, _ = cmd.StdoutPipe()
-		stderrIn, _ = cmd.StderrPipe()
+		var perr error
+		if stdoutIn, perr = cmd.StdoutPipe(); perr != nil {
+			r.Status = -1
+			r.StdErr = []byte("stdout pipe: " + perr.Error())
+			return r
+		}
+		if stderrIn, perr = cmd.StderrPipe(); perr != nil {
+			r.Status = -1
+			r.StdErr = []byte("stderr pipe: " + perr.Error())
+			return r
+		}
 	}
 
 	r.Status = 0
@@ -115,58 +130,42 @@ func ExecCommand(c *Command) (*Result) {
 		return r
 	}
 
-	// Wait for the process to finish or kill it after a timeout (whichever happens first):
+	// Terminate the child - and its whole process group, thanks to Setpgid - if it overruns the
+	// timeout. The previous version polled cmd.ProcessState in a goroutine while cmd.Wait() wrote it
+	// (a data race that `go test -race` flags), and every "if cmd == nil" guard was dead code because
+	// cmd is a non-nil local. A done channel closed on return replaces both: the killer only reads the
+	// pid (an int copy) and done, so it never touches the reaped cmd or the reused pgid after Wait.
+	pid := cmd.Process.Pid
+	done := make(chan struct{})
+	defer close(done)
 	if c.Timeout > 0 {
-		go func(cmd *exec.Cmd, pid int) { // !!! panic: runtime error: invalid memory address or nil pointer dereference
-			for i := 0; i < int(c.Timeout * 10); i++ {
-				time.Sleep(time.Second / 10)
-				if cmd == nil { return }
-				if cmd.ProcessState != nil {
-					break
-				}
+		go func() {
+			select {
+			case <-done:
+				return
+			case <-time.After(time.Duration(c.Timeout * float64(time.Second))):
 			}
-
-			if cmd.ProcessState == nil {
-//				cmd.Process.Signal(syscall.SIGTERM) // No, such a method terminates only this PID, leaving orphans!
-				if cmd == nil { return }
-				syscall.Kill(-pid, syscall.SIGTERM) // !!! [signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0x7c1ef0]
-				time.Sleep(time.Second / 2)
-				if cmd == nil { return }
+			syscall.Kill(-pid, syscall.SIGTERM)
+			select {
+			case <-done: // the SIGTERM already let cmd.Wait() reap it
+			case <-time.After(time.Second / 2):
 				syscall.Kill(-pid, syscall.SIGKILL)
 			}
-		} (cmd, cmd.Process.Pid)
-	} else if c.Timeout == 0 { // Wait for interrupt
-		go func(cmd *exec.Cmd, pid int) {
-//			defer waitWorkers.Done()
-			for {
-				time.Sleep(time.Second / 50)
-				if cmd == nil { return }
-				if cmd.ProcessState != nil {
-					break
-				}
-/*
-				if interrupt {
-					break
-				}
-*/
-			}
-
-			if cmd.ProcessState == nil {
-//				cmd.Process.Signal(syscall.SIGTERM) // No, such a method terminates only this PID, leaving orphans!
-				if cmd == nil { return }
-				syscall.Kill(-pid, syscall.SIGTERM) // !!! [signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0x7c1ef0]
-				time.Sleep(time.Second / 2)
-				if cmd == nil { return }
-				syscall.Kill(-pid, syscall.SIGKILL)
-			}
-		} (cmd, cmd.Process.Pid)
+		}()
 	}
+	// Timeout == 0 means no deadline: cmd.Wait() below simply blocks until the child exits on its own.
+	// The old zero-timeout goroutine only busy-polled the racy ProcessState and its kill path was
+	// unreachable (guarded by ProcessState == nil after Wait already set it), so it is dropped.
 
 	// https://blog.kowalczyk.info/article/wOYk/advanced-command-execution-in-go-with-osexec.html
+	maxReply := c.max_reply
+	if maxReply <= 0 {
+		maxReply = defaultMaxReply
+	}
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		_, errStdout = io.CopyN(stdout, stdoutIn, c.max_reply)
+		_, errStdout = io.CopyN(stdout, stdoutIn, maxReply)
 		if errStdout == io.EOF {
 			errStdout = nil
 		} else {
@@ -174,7 +173,7 @@ func ExecCommand(c *Command) (*Result) {
 		}
 		wg.Done()
 	} ()
-	_, errStderr = io.CopyN(stderr, stderrIn, c.max_reply)
+	_, errStderr = io.CopyN(stderr, stderrIn, maxReply)
 	if errStderr == io.EOF {
 		errStderr = nil
 	} else {

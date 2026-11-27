@@ -63,9 +63,10 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
-//	"sort"
+	"sort"
 	"strings"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 //	"unsafe"
@@ -91,6 +92,12 @@ type TScanDevices struct {
 
 type TKeyboard  struct {
 	Delay int       `default:"5"`
+	// Wipe the word by selecting its characters and deleting the selection, instead of pressing
+	// BackSpace once per character. Off by default: the burst is what every application has always
+	// understood, while selection handling is the application's own behavior. The `default:"..."`
+	// tags in this project are documentation only - nothing applies them - so Go's zero false IS the
+	// default when a config omits this key.
+	WipeBySelection bool
 }
 
 type TActionKeys struct {
@@ -109,7 +116,7 @@ type TWindowClass struct {
 }
 
 type TActions struct {
-	SeqLength int    `default:8`
+	SeqLength int    `default:"8"`
 	WordChars string `default:"(^([0-9A-Z=-]|GRAVE|APOSTROPHE|SEMICOLON|[LR]_BRACE|COMMA|DOT|(BACK)?SLASH|KP[0-9]):0$)"`
 	WordHead string  `default:"(^([0-9A-Z]|GRAVE|APOSTROPHE|SEMICOLON|[LR]_BRACE|COMMA|DOT|(BACK)?SLASH|KP[0-9]):1$)"`
 	NewWord []string
@@ -149,6 +156,11 @@ type TSequence struct {
 	OFF * regexp.Regexp
 	ON * regexp.Regexp
 	SEQ * regexp.Regexp
+	// Set while parsing for a rule whose chain ends in RetypeWord and whose "SEQ:" tail can
+	// match a varying number of key events. RetypeWord() takes the number of keys it must
+	// leave alone from the length of that match, so such a rule cannot compute it and does
+	// not fire at all (see testAction).
+	tailUnprovable bool
 }
 
 type TSequences []TSequence
@@ -202,6 +214,12 @@ var (
 
 	Action = regexp.MustCompile("^Action\\..+")
 	ActionName = regexp.MustCompile("\\..+$")
+	// A "SEQ:" tail whose length is not fixed: bracket classes and "(?" group flags are
+	// dropped first, so what is left of "* + ? { }" really is a repetition of a chain step.
+	SEQ_BRACKET = regexp.MustCompile("\\[[^]]*\\]")
+	SEQ_GROUP   = regexp.MustCompile("\\(\\?")
+	SEQ_REPEAT  = regexp.MustCompile("[*+?{]")
+
 	WordChars *(regexp.Regexp) // Actions.WordChars
 	WordHead *(regexp.Regexp) // Actions.WordHead
 
@@ -224,6 +242,20 @@ var (
 	// Shared t_key queues (it's ok to share *buffered* channels *writes*)
 	keyboardEvents = make(chan t_key, 8)
 	miceEvents = make(chan t_key, 8)
+
+	// Node path -> a reader is running for it. An open fd survives the unlink of its node, so
+	// re-creating /dev/input/eventN (a udev reload, a manual mknod) leaves the previous reader
+	// alive on the same kernel device while the inotify CREATE starts another one next to it.
+	// Both then push every keystroke into keyboardEvents and the state machine sees each key
+	// twice. Measured: the duplicated stream desynchronised the PAUSE press/release counters
+	// and RetypeWord leaked its own trigger into the output ("found pushed keys after retyping
+	// was done!"). One reader per path is what this map guarantees.
+	// A reused number is not a reason to skip a device: destroying a device wakes its blocked
+	// read with an error, so the entry is gone before the watcher's next CREATE is handled (that
+	// one sleeps a second per event). Measured: event0 came back for six consecutive keyboards,
+	// and stand phase 13 (D5/D6) attaches the sixth one and switches with it.
+	attached = make(map[string]bool)
+	attachedMu sync.Mutex
 
 	// Xorg via C-bindings
 	display *C.struct__XDisplay
@@ -250,10 +282,49 @@ var (
 	CTRL_SENTENCE map[string]bool // CTRL at the beginning of the SENTENCE
 	COMPOSE int // Compose counter
 	EXTRA int // Extra keys (to call the Action), must not be retyped.
+	// The XKB group the last WORD character was typed in, or -1 while no character was typed since
+	// the buffer was cleaned. RetypeWord replays raw scancodes and the server translates them with the
+	// group active at the replay, so this is the only record of which layout the text the application
+	// holds really came from (issue #14).
+	wordLayout = -1
 	DOWN = make(map[uint16] int) // In any case, all virtual keys MUST BE RELEASED at the end of retyping.
 
 	clipboardOk = false
 )
+
+// A WORD typed in one window must not be lost when the focus briefly goes to another window and
+// comes back (issue #13: Opera -> yakuake -> Opera between two letters). The global buffer
+// variables above stay the "active" buffer for the window that currently owns input focus; on a
+// focus change the outgoing buffer is saved under its window id and the incoming window's buffer
+// is restored (or started empty). The virtual "WORD" state key is owned by the buffer, not by the
+// machine-wide modifier set, so it travels with it via wordDone, and so does the layout the word was
+// typed in (wordLayout): a different window can have its own idea of "the layout I am on".
+type winBuffers struct {
+	TEST, WORD, SENTENCE t_keys
+	CTRL_WORD, CTRL_SENTENCE map[string]bool
+	COMPOSE int
+	wordDone bool // whether CTRL["WORD"] was set when this buffer was saved
+	wordLayout int // the group the last character of this buffer was typed in (-1 = none yet)
+}
+
+var (
+	winBuf    = map[C.Window]*winBuffers{}
+	winLRU    []C.Window // most-recently-focused first, bounded by winBufMax
+	bufWindow C.Window   // the window the active global buffers belong to
+)
+
+const winBufMax = 32 // LRU cap: a daemon running for months must not keep every closed window
+
+// actionsCustomHint sizes the initial capacity of Actions.Custom. The 4 preset keys are not custom,
+// but a config may carry fewer than 4 keys in total; `len(t) - 4` was then negative and `make`
+// panicked with "len out of range", turning a config typo into a crash. Only the capacity hint is
+// affected - the resulting map is the same either way.
+func actionsCustomHint(n int) int {
+	if n < 4 {
+		return 0
+	}
+	return n - 4
+}
 
 func config() {
 	var (
@@ -373,7 +444,7 @@ func config() {
 		case "Actions":
 			switch t := value.(type) {
 			case map[string]interface{}:
-				Actions.Custom = make(map[string][]string, len(t) - 4) // 4 = count of preset keys
+				Actions.Custom = make(map[string][]string, actionsCustomHint(len(t)))
 				for k, v := range t {
 					switch k {
 					case "SeqLength":
@@ -504,6 +575,44 @@ func config() {
 			panic(fmt.Errorf("Config error: Action definition not found for \"Action.%s\"", key))
 		}
 	}
+	checkActionCycles()
+	collectManagedLayouts()
+}
+
+// doAction() expands "Action.xxx" references recursively and has no depth limit, so a
+// chain that leads back to itself runs until the process dies of a stack overflow -- on
+// the first keystroke matching the rule, far away from the config line that caused it.
+// Reject such a config while parsing it.
+func checkActionCycles() {
+	const (visiting = 1; checked = 2)
+	state := make(map[string]int, len(ActionSet))
+	var walk func(name, chain string) // chain: the path from the root, ending with name
+	walk = func(name, chain string) {
+		switch state[name] {
+		case checked:
+			return // Already proved acyclic: a diamond is not a cycle
+		case visiting:
+			panic(fmt.Errorf("Config error: \"Action.%s\" refers to itself: %s", name, chain))
+		}
+		state[name] = visiting
+		for _, act := range ActionSet[name].Action {
+			if Action.MatchString(act) { // "Action.xxx" >> the same recursion doAction() does
+				ref := strings.TrimLeft(ActionName.FindString(act), ".")
+				walk(ref, chain+" -> "+ref)
+			}
+		}
+		state[name] = checked
+	}
+	// Go randomizes map iteration and walk() reports a cycle as the path from whichever
+	// root reached it first, so the same config got "A -> B -> C -> A" or "C -> A -> B -> C".
+	names := make([]string, 0, len(ActionSet))
+	for name := range ActionSet {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		walk(name, name)
+	}
 }
 
 // Substitute templates "@xxx@"
@@ -583,6 +692,41 @@ func seqParse(str string, act string) (seq TSequence) {
 	return seq
 }
 
+// chainHasAction reports whether the action chain "name" ends in the built-in action
+// "want", following the same "Action.xxx" references that doAction() expands.
+func chainHasAction(name, want string) bool {
+	seen := make(map[string]bool, len(ActionSet))
+	var walk func(string) bool
+	walk = func(n string) bool {
+		if seen[n] { return false }
+		seen[n] = true
+		for _, act := range ActionSet[n].Action {
+			if Action.MatchString(act) {
+				if walk(strings.TrimLeft(ActionName.FindString(act), ".")) { return true }
+			} else if act == want {
+				return true
+			}
+		}
+		return false
+	}
+	return walk(name)
+}
+
+// hasFreeQuantifier tells whether a compiled "SEQ:" tail can match a variable number of
+// key events. RetypeWord() wipes len(WORD) - EXTRA keys and takes EXTRA from the length of
+// the match (see testAction), so a tail of unfixed length silently changes how much is
+// wiped. Measured on the stand: ".*PAUSE:1,PAUSE:0" matched the whole SeqLength window,
+// EXTRA grew to 12 and RetypeWord did nothing at all --
+// "RetypeWord error: WORD(12) is smaller than EXTRA(12)!" -- the layout switched, the word
+// stayed in the wrong one. xswitcher.conf warns about it in a comment; say it at the start and
+// never fire such a rule -- see TSequence.tailUnprovable.
+func hasFreeQuantifier(pattern string) bool {
+	// "[0-9A-Z=-]" and "[LR]_SHIFT" are character classes, not repetitions; "(?i)" and
+	// "(?:" carry no length either. Nothing else may keep a "*", "+", "?" or "{".
+	rest := SEQ_GROUP.ReplaceAllString(SEQ_BRACKET.ReplaceAllString(pattern, ""), "(")
+	return SEQ_REPEAT.MatchString(rest)
+}
+
 func sequences() {
 	var err error
 
@@ -601,8 +745,20 @@ func sequences() {
 
 	ActSeq = make(map[string] TSequences)
 	for key, value := range Actions.Custom {
+		retypes := chainHasAction(key, "RetypeWord")
 		for _, s := range value {
-			ActSeq[key] = append(ActSeq[key], seqParse(s, key))
+			seq := seqParse(s, key)
+			if retypes {
+				rule := template(s)
+				if tpl := SEQ.FindAllStringIndex(rule, -1); tpl != nil {
+					t := strings.TrimLeft(rule[ tpl[0][0] :tpl[0][1] ], " SEQ:")
+					if hasFreeQuantifier(t) {
+						seq.tailUnprovable = true
+						fmt.Printf("Parse warning: the rule for \"Action.%s\" ends in the RetypeWord action, but its SEQ tail \"%s\" matches a varying number of key events. RetypeWord takes the number of the shortcut's own events from that match, so it wipes too few characters or none at all. The rule will not fire; write the tail as the exact chain, e.g. \"SEQ:(PAUSE:1,PAUSE:0)\".\n", key, t)
+					}
+				}
+			}
+			ActSeq[key] = append(ActSeq[key], seq)
 		}
 	}
 
@@ -687,18 +843,21 @@ func keys() {
 func getActiveWindowId() (idChanged bool) { // _Ctype_Window == uint32
 	idChanged = true
 	ActiveWindowId_old := ActiveWindowId
-	if C.XGetInputFocus(display, &ActiveWindowId, &revert_to) == 0 {
-		ActiveWindowId = 0
-		fmt.Println("ActiveWindowId = 0", C.XGetInputFocus(display, &ActiveWindowId, &revert_to))
+	focused := ActiveWindowId // Keep the previous value unless X names a real window
+	if C.XGetInputFocus(display, &focused, &revert_to) == 0 {
+		if *VERBOSE {
+			fmt.Println("XGetInputFocus failed")
+		}
+		return false
 	}
+	if focused <= 1 { // None or PointerRoot
+		// X goes through this state on every focus switch, and a key pressed while it
+		// lasts is still the same user's word: dropping the buffers here wipes it.
+		return false
+	}
+	ActiveWindowId = focused
 
 	if ActiveWindowId == ActiveWindowId_old { return false}
-
-	if ActiveWindowId <= 1 {
-		ActiveWindowClass = ""
-		fmt.Println("ActiveWindowId <= 1")
-		return
-	}
 
 	// !!! "X Error of failed request:  BadWindow (invalid Window parameter)" in case of window was gone.
 	// https://eli.thegreenplace.net/2019/passing-callbacks-and-pointers-to-cgo/
@@ -708,7 +867,9 @@ func getActiveWindowId() (idChanged bool) { // _Ctype_Window == uint32
 	if C.XGetClassHint(display, ActiveWindowId, x_class) > 0 { // "VirtualBox Machine"
 		if ActiveWindowClass != C.GoString(x_class.res_name) {
 			ActiveWindowClass = C.GoString(x_class.res_name)
-			fmt.Println("=", ActiveWindowClass)
+			if *VERBOSE {
+				fmt.Println("=", ActiveWindowClass)
+			}
 		}
 	} else {
 		if C.XGetClassHint(display, ActiveWindowId - 1, x_class) > 0 { // https://antofthy.gitlab.io/info/X/WindowID.txt
@@ -716,10 +877,14 @@ func getActiveWindowId() (idChanged bool) { // _Ctype_Window == uint32
 			// Typically for GTK the parent window is 1 less than the focus window ... But there is no gurantee that the ID is one less.
 			if ActiveWindowClass != C.GoString(x_class.res_name) {
 				ActiveWindowClass = C.GoString(x_class.res_name)
-				fmt.Println("*", ActiveWindowClass)
+				if *VERBOSE {
+					fmt.Println("*", ActiveWindowClass)
+				}
 			}
 		} else {
-			fmt.Println("Empty ActiveWindowClass. M.b. gnome \"window\"?")
+			if *DEBUG {
+				fmt.Println("Empty ActiveWindowClass. M.b. gnome \"window\"?")
+			}
 		}
 	}
 	if C.xerror == C.True { // ??? Is there some action needed?
@@ -744,10 +909,60 @@ func dropBuffers() {
 	CTRL_WORD = copyCTRL(CTRL)
 	CTRL_SENTENCE = copyCTRL(CTRL)
 	COMPOSE = 0
+	wordLayout = -1
 
 	if *VERBOSE {
 		fmt.Printf("dropBuffers()\n")
 	}
+}
+
+func touchWindow(id C.Window) {
+	for i, w := range winLRU {
+		if w == id {
+			winLRU = append(winLRU[:i], winLRU[i+1:]...)
+			break
+		}
+	}
+	winLRU = append([]C.Window{id}, winLRU...)
+	for len(winLRU) > winBufMax {
+		oldest := winLRU[len(winLRU)-1]
+		winLRU = winLRU[:len(winLRU)-1]
+		delete(winBuf, oldest)
+	}
+}
+
+// saveBuffers snapshots the active global buffers under id, so that focusing back into id later
+// can restore them. The "WORD" pseudo state key leaves the machine-wide CTRL map with the buffer.
+func saveBuffers(id C.Window) {
+	_, wd := CTRL["WORD"]
+	winBuf[id] = &winBuffers{
+		TEST: TEST, WORD: WORD, SENTENCE: SENTENCE,
+		CTRL_WORD: CTRL_WORD, CTRL_SENTENCE: CTRL_SENTENCE,
+		COMPOSE: COMPOSE, wordDone: wd, wordLayout: wordLayout,
+	}
+	delete(CTRL, "WORD")
+	touchWindow(id)
+}
+
+// loadBuffers makes id the owner of the active global buffers: restore its snapshot if the window
+// has been focused before, otherwise start from a clean buffer. Either way id becomes the current
+// buffer window, and the LRU order is refreshed.
+func loadBuffers(id C.Window) {
+	b, ok := winBuf[id]
+	if !ok {
+		dropBuffers()
+		touchWindow(id)
+		return
+	}
+	TEST, WORD, SENTENCE = b.TEST, b.WORD, b.SENTENCE
+	CTRL_WORD, CTRL_SENTENCE, COMPOSE = b.CTRL_WORD, b.CTRL_SENTENCE, b.COMPOSE
+	wordLayout = b.wordLayout
+	if b.wordDone {
+		CTRL["WORD"] = true
+	} else {
+		delete(CTRL, "WORD")
+	}
+	touchWindow(id)
 }
 
 func newWord() {
@@ -761,6 +976,7 @@ func newWord() {
 	delete(CTRL, "WORD")
 	CTRL_WORD = copyCTRL(CTRL)
 	COMPOSE = 0
+	wordLayout = -1 // whatever group the surviving pressed key came from is not recorded yet
 }
 
 func DropBuffers(A *TAction) {
@@ -771,15 +987,58 @@ func Clean(A *TAction) {
 	newWord()
 }
 
-func checkLanguageId() bool {
-	state := new(C.struct__XkbStateRec)
-	C.XkbGetState(display, C.XkbUseCoreKbd, state);
+// managedLayouts are the XKB groups this configuration asks xswitcher to handle: the global
+// [ActionKeys] Layouts plus the lists and numbers of the actions that can really select a layout.
+// The global list alone is not enough: Switch() walks the action's own Layouts and Layout() takes
+// the action's own Layout, so a group reachable only through an action read as "extra language"
+// here and every key of it was dropped -- the switch the config asked for landed in a layout where
+// nothing is collected. A group named nowhere stays unmanaged, which is the "Don't impact extra
+// languages (e.g., Chinese)" case xswitcher.conf describes.
+var managedLayouts = map[int]bool{}
 
+func collectManagedLayouts() {
+	managedLayouts = make(map[int]bool, len(ActionKeys.Layouts))
 	for _, l := range ActionKeys.Layouts {
-		if l == int(state.group) { return true }
+		managedLayouts[l] = true
+	}
+	// Only a section that names the leaf itself may contribute: an unset Layout parses to Go's
+	// zero 0, not to the -1 the struct tag advertises, because nothing reads those tags -- so
+	// trusting every section's Layout would hand group 0 to xswitcher in every config.
+	for _, a := range ActionSet {
+		for _, act := range a.Action {
+			switch act {
+			case "Switch":
+				for _, l := range a.Layouts {
+					managedLayouts[l] = true
+				}
+			case "Layout":
+				if a.Layout >= 0 {
+					managedLayouts[a.Layout] = true
+				}
+			}
+		}
+	}
+}
+
+// checkLanguageId reads the group the server is on and reports whether this configuration manages
+// it. The group itself is returned too: checkAppend records it with the word, which is what tells a
+// later retype which layout the characters were produced in (issue #14). One XkbGetState per key
+// event serves both, so the snapshot costs no extra round trip. A read that fails reports -1, a
+// group no list can name, so the caller treats the layout as unmanaged instead of silently claiming
+// group 0 from an untouched struct.
+func checkLanguageId() (int, bool) {
+	state := new(C.struct__XkbStateRec)
+	group := -1
+
+	if rc := int(C.XkbGetState(display, C.XkbUseCoreKbd, state)); rc != 0 {
+		if *VERBOSE || *DEBUG {
+			fmt.Printf("checkLanguageId: XkbGetState returned %d\n", rc)
+		}
+	} else {
+		group = int(state.group)
 	}
 
-	return false
+	return group, managedLayouts[group]
 }
 
 func getXModifiers() uint32 {
@@ -830,14 +1089,25 @@ func Language(lang int) (int) {
 	state := new(C.struct__XkbStateRec)
 	layout := C.uint(0)
 
-	C.XkbGetState(display, C.XkbUseCoreKbd, state);
+	if rc := int(C.XkbGetState(display, C.XkbUseCoreKbd, state)); rc != 0 && (*VERBOSE || *DEBUG) {
+		fmt.Printf("Language: XkbGetState returned %d\n", rc)
+	}
 	if lang >= 0 {
 		if int(state.group) != lang {
 			CTRL["WORD"] = true
 		}
 		layout = C.uint(lang)
-		C.XkbLockGroup(display, C.XkbUseCoreKbd, layout);
-		C.XkbGetState(display, C.XkbUseCoreKbd, state);
+		// XkbLockGroup returns a Status, and its meaning here is not established. Measured on the
+		// stand: locking group 0 answered 1 in runs where XkbGetState right after read group 0 back -
+		// a request that plainly took effect - while locking group 1 answered 0. So a non-zero answer
+		// is not "the switch failed" and must not be reported as that. Which group is in effect is
+		// what the re-read below says; this line only surfaces the answer the call gave.
+		if rc := int(C.XkbLockGroup(display, C.XkbUseCoreKbd, layout)); rc != 0 && (*VERBOSE || *DEBUG) {
+			fmt.Printf("Language: XkbLockGroup(%d) answered %d\n", lang, rc)
+		}
+		if rc := int(C.XkbGetState(display, C.XkbUseCoreKbd, state)); rc != 0 && (*VERBOSE || *DEBUG) {
+			fmt.Printf("Language: XkbGetState(after) returned %d\n", rc)
+		}
 	}
 
 	if *VERBOSE {
@@ -848,13 +1118,24 @@ func Language(lang int) (int) {
 
 // Push or release the key on virtual keyboard
 func sendKey(key t_key) {
+	var err error
 	switch key.value {
 	case 0:
-		kb.Up(key.code)
-		kb.Sync()
+		err = kb.Up(key.code)
+		if e := kb.Sync(); err == nil {
+			err = e
+		}
 	default:
-		kb.Down(key.code)
-		kb.Sync()
+		err = kb.Down(key.code)
+		if e := kb.Sync(); err == nil {
+			err = e
+		}
+	}
+	// kb.Up/Down/Sync write to the uinput device and can fail (device closed, ENODEV). A failed
+	// write during a retype burst is silent otherwise, so surface it - under DEBUG only, because a
+	// dead device would otherwise flood stdout once per key.
+	if err != nil && *DEBUG {
+		fmt.Printf("sendKey(%d=%d) failed: %v\n", key.code, key.value, err)
 	}
 	time.Sleep(time.Duration(Keyboard.Delay) * time.Millisecond)
 }
@@ -894,6 +1175,22 @@ func RetypeWord(A *TAction) {
 	}
 	count := 0 // Count chars to be deleted
 	seq := 0 // Incremental key event counter
+
+	// Issue #14: the replay below sends raw scancodes, and the server translates them with the layout
+	// that is active AT THE REPLAY. The action chain runs Switch() first, and Switch() steps on from
+	// the group it reads at that moment - so when the layout changed without xswitcher seeing a word
+	// character (another program, a desktop shortcut, an application doing it itself) the step can
+	// arrive back on the very group the word was typed in, and the "corrected" word comes out
+	// identical to the broken one. If it did, lock the group the word was NOT typed in.
+	// Wayland stays out of this: under [Wayland] BypassX the daemon cannot observe a layout change it
+	// did not make itself, Language() there only reports its own cache, and correcting from that cache
+	// would double the switch the desktop already performed.
+	if !Wayland.BypassX && wordLayout >= 0 && len(ActionKeys.Layouts) > 0 {
+		if active := Language(-1); active == wordLayout {
+			Language(nextLayout(wordLayout, ActionKeys.Layouts))
+		}
+	}
+
 	// Patch "orphaned" key releases.
 	o := make(map[uint16] bool) // True since key-down till key-up.
 	for i := 0; i < (len(WORD) - EXTRA); i++ {
@@ -923,11 +1220,27 @@ func RetypeWord(A *TAction) {
 	}
 
 	// Clean the word
+	wipe := count - COMPOSE
 	if *VERBOSE {
-		fmt.Printf("BACKSPACE: %v - %v = %v\n", count, COMPOSE, count - COMPOSE)
+		fmt.Printf("BACKSPACE: %v - %v = %v\n", count, COMPOSE, wipe)
 	}
-	for i := 0; i < count - COMPOSE; i++ {
+	if Keyboard.WipeBySelection && wipe > 0 {
+		// P1-6: the burst below asks the application for `wipe` separate edits, one per
+		// Keyboard.Delay, and an editor that coalesces or loses any of them keeps part of the word -
+		// the replay then duplicates that remainder. Selecting the characters and deleting the
+		// selection is one edit, and typing over a selection is what every text widget already does
+		// on the first BackSpace, so a dropped keystroke shortens a selection instead of leaving a
+		// half-deleted word behind.
+		sendKey(t_key{uint16(key_def["L_SHIFT"]), 1})
+		for i := 0; i < wipe; i++ {
+			pressKey(evdev.KEY_LEFT)
+		}
+		sendKey(t_key{uint16(key_def["L_SHIFT"]), 0})
 		pressKey(evdev.KEY_BACKSPACE)
+	} else {
+		for i := 0; i < wipe; i++ {
+			pressKey(evdev.KEY_BACKSPACE)
+		}
 	}
 
 	// Initial CTRL state
@@ -987,6 +1300,9 @@ func RetypeWord(A *TAction) {
 	}
 	WORD = WORD[ 0 : (len(WORD) - EXTRA)]
 	CTRL["WORD"] = true
+	// Whatever the application holds now is the replayed text, produced in the layout that is active
+	// at this moment - so the snapshot follows the word instead of staying on the layout it came from.
+	wordLayout = Language(-1)
 
 	// Clear virtual keyboard state
 	if len(DOWN) > 0 {
@@ -997,30 +1313,160 @@ func RetypeWord(A *TAction) {
 	}
 }
 
+// nextLayout returns the layout that follows ref inside the cyclic list. Switch() stepped with
+// `next = l + 1`, which is the group VALUE used later as a list INDEX, so only a list starting at
+// group 0 cycled: with Layouts = [1, 2] and the server on group 1 it computed next = 2, wrapped it
+// by `next >= len(Layouts)` and re-selected Layouts[0] = 1 -- the group it had just left. Walking
+// positions keeps the shipped [0, 1] answers identical and makes [1, 2] cycle 1 >> 2 >> 1.
+func nextLayout(ref int, layouts []int) int {
+	for i, l := range layouts {
+		if l == ref {
+			return layouts[(i + 1) % len(layouts)]
+		}
+	}
+	return layouts[0] // a group the list does not name: start from its beginning, as before
+}
+
 // ToDo: newWord() | dropBuffers() must be implemented here in "smart" way.
 // Nested action: leave buffers as is. Or implement extra option "what to do with buffers".
 // Single action: drop. Or be smarter and remember the layout inside key sequences...
 func Switch(A *TAction) {
-	next := 0
-	l := Language(-1)
-
-	for i := 0; i < len(A.Layouts); i++ {
-		if l == A.Layouts[i] {
-			next = l + 1
-		}
+	if len(A.Layouts) == 0 { // A.Layouts[0] below would panic and the daemon would die on this key
+		fmt.Printf("Switch warning: the action lists no Layouts to cycle through\n")
+		return
 	}
 
-	if next >= len(A.Layouts) {
-		next = 0
-	}
-
-	Language(A.Layouts[next])
+	Language(nextLayout(Language(-1), A.Layouts))
 
 	CTRL["WORD"] = true
 }
 
 func Layout(A *TAction) {
 	Language(A.Layout)
+}
+
+// resolveRunAs turns the [Action.X] "run_as" config (UID/GID) into the numeric credentials that
+// exec.ExecCommand applies. exec.ExecCommand only sets SysProcAttr.Credential when UID > 0, so
+// (0, 0) means "run as the current user" - the documented default when a config omits UID. The old
+// code called user.Lookup(A.UID) unconditionally, and looking up the empty string fails, so Exec
+// returned before starting the command: every [Action.X] Exec without a UID was a silent no-op.
+func resolveRunAs(uid, gid string) (uint32, uint32, error) {
+	if len(uid) == 0 {
+		return 0, 0, nil
+	}
+	user_, err := user.Lookup(uid)
+	if err != nil {
+		return 0, 0, err
+	}
+	u64, err := strconv.ParseUint(user_.Uid, 10, 32)
+	if err != nil {
+		return 0, 0, fmt.Errorf("non-integer uid for user %q: %v", uid, err)
+	}
+
+	gid_ := user_.Gid
+	if len(gid) > 0 {
+		group, err := user.LookupGroup(gid)
+		if err != nil {
+			return 0, 0, err
+		}
+		gid_ = group.Gid
+	}
+	g64, err := strconv.ParseUint(gid_, 10, 32)
+	if err != nil {
+		return 0, 0, fmt.Errorf("non-integer gid for user %q: %v", uid, err)
+	}
+	return uint32(u64), uint32(g64), nil
+}
+
+// The glyphs the canonical key names of src/keys.go produce on a US layout: index 0 is the
+// unshifted glyph, index 1 the shifted one, and a one-character value means the key gives the same
+// character either way. Letters need no entry because their name already is the shifted glyph, and
+// neither do the digits, whose names "1".."0" are the unshifted glyphs.
+var usGlyphs = map[string]string{
+	"-": "-_", "=": "=+", "GRAVE": "`~", "APOSTROPHE": "'\"", "SEMICOLON": ";:",
+	"L_BRACE": "[{", "R_BRACE": "]}", "BACKSLASH": "\\|", "COMMA": ",<", "DOT": ".>", "SLASH": "/?",
+	"KP0": "0", "KP1": "1", "KP2": "2", "KP3": "3", "KP4": "4",
+	"KP5": "5", "KP6": "6", "KP7": "7", "KP8": "8", "KP9": "9",
+}
+
+// bufferToText renders the key events a buffer collected back into the characters they produced,
+// so that an external command can be given the word instead of an internal dump.
+//
+// The evdev codes an event carries name a key POSITION, never a glyph, so the only layout this can
+// spell is the one whose position numbering the daemon was configured against: the US row of the
+// shipped [ActionKeys] Layouts = [0, 1]. A word typed in another group comes out as the latin
+// glyphs of the same physical keys, which is what the replay itself would do. Spelling a non-latin
+// group would mean reading the server's XKB map, and that is a change of its own.
+//
+// CapsLock starts from the state the daemon keeps for the machine (getXModifiers() refreshes
+// CTRL from Xkb after every event) and then applies the CAPS presses inside the buffer, so a buffer
+// that toggled it mid-word still renders the way it was typed.
+func bufferToText(buf t_keys) string {
+	shift := false
+	caps := CTRL["CAPS"]
+	text := make([]rune, 0, len(buf))
+	for _, k := range buf {
+		name := key_name[k.code]
+		switch name {
+		case "L_SHIFT", "R_SHIFT":
+			shift = k.value > 0
+			continue
+		case "CAPS":
+			if k.value == 1 {
+				caps = !caps
+			}
+			continue
+		case "BACKSPACE":
+			if k.value == 1 && len(text) > 0 {
+				text = text[ : len(text)-1]
+			}
+			continue
+		case "TAB":
+			if k.value == 1 {
+				text = append(text, '\t')
+			}
+			continue
+		case "ENTER":
+			if k.value == 1 {
+				text = append(text, '\n')
+			}
+			continue
+		case "SPACE":
+			if k.value == 1 {
+				text = append(text, ' ')
+			}
+			continue
+		}
+		if k.value != 1 { // Only a press produces a character; its release and any repeat do not.
+			continue
+		}
+		if glyph, ok := usGlyphs[name]; ok {
+			r := rune(glyph[0])
+			if shift && len(glyph) > 1 {
+				r = rune(glyph[1])
+			}
+			text = append(text, r)
+			continue
+		}
+		if len(name) == 1 && name[0] >= 'A' && name[0] <= 'Z' {
+			// A letter is uppercase when exactly one of Shift and CapsLock is in effect.
+			if shift != caps {
+				text = append(text, rune(name[0]))
+			} else {
+				text = append(text, rune(name[0]-'A'+'a'))
+			}
+			continue
+		}
+		if len(name) == 1 && name[0] >= '0' && name[0] <= '9' { // The names "1".."9" and "0".
+			if shift {
+				text = append(text, rune(")!@#$%^&*("[name[0]-'0']))
+			} else {
+				text = append(text, rune(name[0]))
+			}
+		}
+		// Anything else (function keys, modifiers, navigation) produced no character.
+	}
+	return string(text)
 }
 
 func Exec(A *TAction) {
@@ -1039,7 +1485,7 @@ func Exec(A *TAction) {
 	var c exec.Command;
 	args, err := shellquote.Split(A.Exec)
 	if err != nil {
-		fmt.Printf("Exec error: %s", err.Error)
+		fmt.Printf("Exec error: %s", err.Error())
 		return
 	}
 
@@ -1061,9 +1507,15 @@ func Exec(A *TAction) {
 	if A.SendBuffer != "" {
 		switch A.SendBuffer {
 		case "WORD":
-			c.StdIn = []byte(fmt.Sprintf("%v",WORD))
+			c.StdIn = []byte(bufferToText(WORD))
 		case "SENTENCE":
-			c.StdIn = []byte(fmt.Sprintf("%v",SENTENCE))
+			c.StdIn = []byte(bufferToText(SENTENCE))
+		case "CLIPBOARD":
+			// The text the user already selected/copied (issue #5). A word buffer cannot supply it:
+			// xswitcher only sees keystrokes, while the selection lives in the X server. An unreadable
+			// or non-text clipboard gives an empty stdin, the same as an empty WORD would.
+			txt, _ := clipboardText()
+			c.StdIn = []byte(txt)
 		default:
 			c.StdIn = []byte(A.SendBuffer)
 		}
@@ -1078,37 +1530,20 @@ func Exec(A *TAction) {
 	}
 	c.Set_env = append(c.Set_env, A.Environment...)
 
-	// UID & GID
-	user_, err := user.Lookup(A.UID)
+	// UID & GID: an empty UID keeps (0, 0) so exec runs as the current user (see resolveRunAs).
+	c.UID, c.GID, err = resolveRunAs(A.UID, A.GID)
 	if err != nil {
-		fmt.Printf("Exec: user \"%s\" invalid: %v", A.UID, err)
+		fmt.Printf("Exec: run_as %q/%q invalid: %v\n", A.UID, A.GID, err)
 		return
 	}
-	u64, err := strconv.ParseUint(user_.Uid, 10, 32)
-	if err != nil {
-		fmt.Printf("Exec: non-integer uid! Is it linux?")
-		return
-	}
-	c.UID = uint32(u64)
-
-	gid := user_.Gid
-	if len(A.GID) > 0 {
-		group, err := user.LookupGroup(A.GID)
-		if err != nil {
-			fmt.Printf("Exec: group \"%s\" invalid: %v", A.GID, err)
-		}
-		gid = group.Gid
-	}
-	g64, err := strconv.ParseUint(gid, 10, 32)
-	if err != nil {
-		fmt.Printf("Exec: non-integer gid! Is it linux?")
-		return
-	}
-	c.GID= uint32(g64)
 
 	
 	if *VERBOSE || *DEBUG {
-		fmt.Printf("Exec: %v %v\n", c, CTRL_WORD)
+		// The struct carries StdIn, so printing it whole would put the text a hook was handed -- and
+		// since "CLIPBOARD" that text is whatever the user copied last -- into the log. Describe the
+		// call and the size of its input instead; the modifier state is not user text and stays.
+		fmt.Printf("Exec: %q args=%v shell=%v dir=%q timeout=%v wait=%v stdin=%dB ctrl=%v\n",
+			c.Command, c.Args, c.UseShell, c.Set_dir, c.Timeout, !c.No_wait, len(c.StdIn), CTRL_WORD)
 	}
 	r := exec.ExecCommand(&c)
 
@@ -1140,6 +1575,19 @@ func setWindowActions() {
 	return
 }
 
+// sortedSeqNames returns the keys of an ActSeq map in a fixed (lexicographic) order. Range over a map
+// yields keys in a randomized order, and the ActSeq firing loop has no break: several rules can match
+// the same event and each doAction mutates the shared WORD/EXTRA/COMPOSE buffers, so an unordered
+// range made the response to a given keystroke depend on Go's map seed. Sorting makes it reproducible.
+func sortedSeqNames(seq map[string]TSequences) []string {
+	names := make([]string, 0, len(seq))
+	for name := range seq {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 func testAction(t *TSequences) bool {
 TEST:
 	for _, test := range *t {
@@ -1161,6 +1609,12 @@ TEST:
 		}
 		if test.SEQ != nil {
 			if test.SEQ.MatchString(TAIL.String()[1:]) {
+				if test.tailUnprovable {
+					// The shortcut's own event count would be read off this match, and the match
+					// has no fixed length. Firing would wipe a number nobody asked for, so let the
+					// next rule of the same action try instead.
+					continue TEST
+				}
 				tail := test.SEQ.FindString(TAIL.String()[1:]) // The last keys must be omited, e.g. while retyping word.
 				// Count tail commas
 				EXTRA = strings.Count(tail, ",") + 1
@@ -1207,6 +1661,12 @@ func doAction(name *string) { // name of ActionSet
 
 func doWindowActions() {
 	TAIL.Reset()
+	// EXTRA is the event count the matched SEQ tail protects. testAction assigns it on every true
+	// return and RetypeWord - the only reader - is reached through that return alone, so no path reads
+	// a value an earlier event left behind. Clearing it with the rest of the per-event state keeps that
+	// a property of this call rather than of the program's history: a consumer added later, or a rule
+	// that stops carrying a tail, then wipes the word it actually holds.
+	EXTRA = 0
 
 	if WC == nil { return }
 	if WC.Actions == "" { return }
@@ -1250,7 +1710,8 @@ func doWindowActions() {
 		newWord()
 		return
 	}
-	for name, act := range ActSeq { // Is there some reason to do more then 1 action?
+	for _, name := range sortedSeqNames(ActSeq) { // Is there some reason to do more then 1 action?
+		act := ActSeq[name]
 		if testAction(&act) {
 			if *VERBOSE || *DEBUG {
 				fmt.Printf("%s: %s\n", name, TAIL.String()[1:])
@@ -1285,16 +1746,39 @@ func checkAppend(event t_key, slice ...*t_keys) {
 	}
 	getXModifiers() // X can lag while setting NUMLOCK state (and m.b. CAPSLOCK too), so check it after each key event
 
-	if ! checkLanguageId() { return } // Don't proceed with extra languages
+	group, managed := checkLanguageId() // A group no action and the global [ActionKeys] Layouts list name:
+	if ! managed {
+		// drop the buffers, so switching back cannot retype a WORD left over from the last managed
+		// group. dropBuffers() is idempotent, so calling it on every event while unmanaged is safe.
+		dropBuffers()
+		return
+	}
 
 
 	if getActiveWindowId() { // New focused window detected
-		// Drop buffers, but store this event
-		dropBuffers()
+		// Save the buffer the outgoing window had collected and restore the incoming window's own,
+		// instead of dropping it: this is what keeps a half-typed word when focus blips to another
+		// window and back (issue #13). A first-ever window starts from a clean buffer.
+		if bufWindow > 1 { // skip None(0)/PointerRoot(1): not a real buffer owner
+			saveBuffers(bufWindow)
+		}
+		loadBuffers(ActiveWindowId)
+		bufWindow = ActiveWindowId
+		setWindowActions()
+	} else if WC == nil {
+		// X named no window yet (None/PointerRoot, or no WM at all): without an action set
+		// the daemon has nothing to run and the keyboard stays silently unswitched.
 		setWindowActions()
 	}
 
 	for _, key := range slice {
+		// Issue #14: remember the layout the characters of WORD were produced in. Only the word
+		// buffer records it, and only for the events WordChars counts as characters to wipe, so the
+		// trigger's own keys (PAUSE, the modifiers) never overwrite it. testKey() passes TEST alone,
+		// so a mouse click cannot touch the snapshot either.
+		if key == &WORD && WordChars.MatchString(key_name[event.code] + ":" + strconv.Itoa(int(event.value))) {
+			wordLayout = group
+		}
 		*key = append(*key, event)
 	}
 
@@ -1318,7 +1802,15 @@ func dropKey(event t_key) {
 }
 
 func events(device *evdev.InputDevice) {
+	path := device.Path()
 	name, _ := device.Name()
+	// Forget the path only when this reader really stops, so that a device attached again later
+	// can be opened once more.
+	defer func() {
+		attachedMu.Lock()
+		delete(attached, path)
+		attachedMu.Unlock()
+	}()
 	for {
 		event, err := device.ReadOne()
 		if err != nil {
@@ -1349,6 +1841,21 @@ func connectEvents(connectPath string) {
 		if (connectPath != "") && (dev.Path != connectPath) {
 			continue
 		}
+		if dev.Name == keybd_event.DeviceName { // Own output would be read back as input
+			if *VERBOSE {
+				fmt.Printf("- %s:\t%s (own virtual keyboard)\n", dev.Path, dev.Name)
+			}
+			continue
+		}
+		attachedMu.Lock()
+		reading := attached[dev.Path]
+		attachedMu.Unlock()
+		if reading { // A reader for this path is already running
+			if *VERBOSE {
+				fmt.Printf("- %s:\t%s (already attached)\n", dev.Path, dev.Name)
+			}
+			continue
+		}
 		skip := true
 		d, err := evdev.Open(dev.Path)
 		if err != nil {
@@ -1357,21 +1864,37 @@ func connectEvents(connectPath string) {
 			continue
 		}
 		if ScanDevices.BypassRE.MatchString(dev.Name) {
-			fmt.Printf("- %s:\t%s\n", dev.Path, dev.Name)
+			// The descriptor was opened above and no reader takes it over, so close it here.
+			// Left to itself it stays open until the garbage collector finalizes d: measured
+			// with GOGC=off, three bypassed devices meant three held fds.
+			_ = d.Close()
+			if *VERBOSE {
+				fmt.Printf("- %s:\t%s\n", dev.Path, dev.Name)
+			}
 			continue
 		}
 
 		for _, t := range d.CapableTypes() {
 //			fmt.Printf("  Event type %d (%s)\n", t, evdev.TypeName(t))
 			if t == evdev.EV_KEY {
+				// Registered before the goroutine starts: events() removes the entry when it
+				// leaves, so marking it later could let a second reader slip in.
+				attachedMu.Lock()
+				attached[dev.Path] = true
+				attachedMu.Unlock()
 				go events(d)
 				skip = false
-				fmt.Printf("  %s:\t%s\n", dev.Path, dev.Name)
+				if *VERBOSE {
+					fmt.Printf("  %s:\t%s\n", dev.Path, dev.Name)
+				}
 				break
 			}
 		}
-		if skip {
-			fmt.Printf("x %s:\t%s\n", dev.Path, dev.Name)
+		if skip { // no EV_KEY capability: the reader never took d, so this is ours to close
+			_ = d.Close()
+			if *VERBOSE {
+				fmt.Printf("x %s:\t%s\n", dev.Path, dev.Name)
+			}
 		}
 	}
 	return
@@ -1417,21 +1940,28 @@ func Respawn(*TAction) { // Completelly respawn xswitcher.
 	os.Exit(0)
 }
 
-func typeClipboard(A *TAction) { // Try to type the text from clipboard to virtual keyboard.
+func clipboardText() (string, bool) { // The clipboard's text, or false if it is unreadable or holds none.
+	// Init only has to succeed once per process, so the guard lives here instead of at every caller.
+	// The content itself is never printed: it is whatever the user last copied.
 	if ! clipboardOk {
-		err := clipboard.Init()
-		if err != nil {
+		if err := clipboard.Init(); err != nil {
 			fmt.Printf("Unable to read from the clipboard: %v.\n", err)
-			return
+			return "", false
 		}
+		clipboardOk = true
 	}
-	clipboardOk = true
 	b := clipboard.Read(clipboard.FmtText)
-	if b == nil { return }
+	if b == nil { return "", false }
+	return string(b), true
+}
 
-//	fmt.Println(scancodes.SequenceForString(string(b)))
+func typeClipboard(A *TAction) { // Try to type the text from clipboard to virtual keyboard.
+	b, ok := clipboardText()
+	if !ok { return }
+
+//	fmt.Println(scancodes.SequenceForString(b))
 //	return
-	clip := strings.Split(scancodes.SequenceForString(string(b)), " ")
+	clip := strings.Split(scancodes.SequenceForString(b), " ")
 	for _, cc := range clip {
 //		fmt.Printf("%v\n", cc)
 		c := strings.Split(cc, "+")
@@ -1481,7 +2011,7 @@ func serve() {
 				dropKey(event)
 			}
 		case event = <- keyboardEvents:
-			if event.code < 0 || event.code > 767 { // Fuse against out-of-bounds: in old times there was need in.
+			if event.code > 767 { // Upper bound of key_name[]; the field is uint16, so `code < 0` was always false.
 				fmt.Printf("!!! Invalid event code: %d\n", event.code);
 			} else {
 				if *TEST_MODE {
@@ -1550,7 +2080,7 @@ func main() {
 					fmt.Printf("***WTF***: read(watcher.Errors) != ok\n")
 					continue
 				}
-				fmt.Printf("watcher error:", err)
+				fmt.Printf("watcher error: %v\n", err)
 			}
 		}
 	}()
