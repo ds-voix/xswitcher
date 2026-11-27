@@ -1,0 +1,8 @@
+# The Sponsor button belongs to the project, not to whoever sent a patch series: the
+# github key stays ds-voix. Everything below only ADDS the channels that paid for the
+# audit carried by these PRs, so a reader who wants to thank the work has somewhere to
+# go, and the button still points at the upstream account.
+github: [ds-voix]
+custom:
+  - https://github.com/ds-voix/xswitcher/blob/main/.github/wallets.md
+  - https://www.donationalerts.com/r/bahooo

@@ -1,0 +1,156 @@
+version: 2
+
+project_name: xswitcher
+
+# The stamp flags are the same ones .github/workflows/ci.yml asserts: a released asset answers
+# `xswitcher --version` with the tag and the commit it was built from.
+builds:
+  - id: daemon-amd64
+    main: ./src
+    binary: xswitcher
+    goos: [linux]
+    goarch: [amd64]
+    flags: [-trimpath]
+    env: [CGO_ENABLED=1, CC=x86_64-linux-gnu-gcc]
+    ldflags:
+      - -s -w
+      - -X xswitcher/internal/about.Version={{ .Tag }}
+      - -X xswitcher/internal/about.Commit={{ .ShortCommit }}
+
+  # cgo does not cross-compile by itself: without this CC the linker picks the host one and fails on
+  # "-lX11: cannot find". Measured: with gcc-aarch64-linux-gnu plus the :arm64 dev packages the daemon
+  # comes out as ELF AArch64 and the GUI builds too (30 356 096 bytes).
+  - id: daemon-arm64
+    main: ./src
+    binary: xswitcher
+    goos: [linux]
+    goarch: [arm64]
+    flags: [-trimpath]
+    env: [CGO_ENABLED=1, CC=aarch64-linux-gnu-gcc]
+    ldflags:
+      - -s -w
+      - -X xswitcher/internal/about.Version={{ .Tag }}
+      - -X xswitcher/internal/about.Commit={{ .ShortCommit }}
+
+  - id: gui-amd64
+    main: ./cmd/gui
+    binary: xswitcher-gui
+    goos: [linux]
+    goarch: [amd64]
+    flags: [-trimpath]
+    env: [CGO_ENABLED=1, CC=x86_64-linux-gnu-gcc]
+    ldflags:
+      - -s -w
+      - -X xswitcher/internal/about.Version={{ .Tag }}
+      - -X xswitcher/internal/about.Commit={{ .ShortCommit }}
+
+  - id: gui-arm64
+    main: ./cmd/gui
+    binary: xswitcher-gui
+    goos: [linux]
+    goarch: [arm64]
+    flags: [-trimpath]
+    env: [CGO_ENABLED=1, CC=aarch64-linux-gnu-gcc]
+    ldflags:
+      - -s -w
+      - -X xswitcher/internal/about.Version={{ .Tag }}
+      - -X xswitcher/internal/about.Commit={{ .ShortCommit }}
+
+archives:
+  - id: portable
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    files:
+      - src: xswitcher.conf
+        strip_parent: true
+      - src: LICENSE
+        strip_parent: true
+      - src: README.md
+        strip_parent: true
+      - src: packaging/systemd/user/xswitcher.service
+        strip_parent: true
+
+# No setuid bit anywhere: the shipped binaries would have had to be root-owned and +x, which is what
+# upstream issue #15 asks to drop. Access to /dev/input is granted by the "input" group instead, and a
+# package script that adds a user to a group is not run silently -- postinst only prints what to do.
+# Two entries, not one with formats [deb, rpm]: goreleaser v2 keeps `dependencies` a flat list
+# (`goreleaser schema` shows no per-format dependency field on NFPMRPM, and NFPMDeb only carries
+# `predepends`), while the package names differ between the two ecosystems. The shared parts are
+# repeated on purpose; splitting them into anchors would only hide which list belongs to which format.
+nfpms:
+  - id: deb
+    package_name: xswitcher
+    ids: [daemon-amd64, daemon-arm64, gui-amd64, gui-arm64]
+    file_name_template: "{{ .ConventionalFileName }}"
+    formats: [deb]
+    homepage: https://github.com/ds-voix/xswitcher
+    maintainer: xswitcher <https://github.com/ds-voix/xswitcher>
+    description: |
+      Language switcher for X.Org that reads the kernel input layer, switches the layout and retypes
+      the word into the layout it should have been typed in.
+    license: AGPL-3.0-only
+    dependencies: [libc6, libx11-6, libxkbcommon0, libgl1]
+    contents:
+      - src: xswitcher.conf
+        dst: /etc/xswitcher/xswitcher.conf
+        file_info:
+          mode: 0644
+      - src: packaging/systemd/user/xswitcher.service
+        dst: /usr/lib/systemd/user/xswitcher.service
+        file_info:
+          mode: 0644
+      - src: sounds/*.wav
+        dst: /usr/share/xswitcher/sounds
+        file_info:
+          mode: 0644
+      - src: README.md
+        dst: /usr/share/doc/xswitcher/README.md
+        file_info:
+          mode: 0644
+    scripts:
+      postinstall: packaging/scripts/post-install.sh
+
+  - id: rpm
+    package_name: xswitcher
+    ids: [daemon-amd64, daemon-arm64, gui-amd64, gui-arm64]
+    file_name_template: "{{ .ConventionalFileName }}"
+    formats: [rpm]
+    homepage: https://github.com/ds-voix/xswitcher
+    maintainer: xswitcher <https://github.com/ds-voix/xswitcher>
+    description: |
+      Language switcher for X.Org that reads the kernel input layer, switches the layout and retypes
+      the word into the layout it should have been typed in.
+    license: AGPL-3.0-only
+    dependencies: [glibc, libX11, libxkbcommon, mesa-libGL]
+    contents:
+      - src: xswitcher.conf
+        dst: /etc/xswitcher/xswitcher.conf
+        file_info:
+          mode: 0644
+      - src: packaging/systemd/user/xswitcher.service
+        dst: /usr/lib/systemd/user/xswitcher.service
+        file_info:
+          mode: 0644
+      - src: sounds/*.wav
+        dst: /usr/share/xswitcher/sounds
+        file_info:
+          mode: 0644
+      - src: README.md
+        dst: /usr/share/doc/xswitcher/README.md
+        file_info:
+          mode: 0644
+    scripts:
+      postinstall: packaging/scripts/post-install.sh
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ .Tag }}-snapshot"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^stand:"

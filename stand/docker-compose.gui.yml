@@ -1,0 +1,34 @@
+# === stand/docker-compose.gui.yml ===
+# The GUI stand (Xvfb + noVNC + the daemon and GUI built from the checkout).
+#
+#   cd stand && docker compose -f docker-compose.gui.yml up -d --build
+#   docker exec xswitcher-gui-stand bash /w/stand/gui-stand.sh
+#
+# context is the repository root on purpose: the sources are bind-mounted at /w, so the stand
+# never needs a copy of them in the image (the previous version of this file built from stand/
+# and left 38 duplicated sources under stand/build-src/ in the index).
+
+services:
+  gui-stand:
+    build:
+      context: ..
+      dockerfile: stand/Dockerfile.gui
+    image: xswitcher-gui-stand:local
+    container_name: xswitcher-gui-stand
+    # uinput: the stand creates two keyboards (the hand and the daemon's own), and that needs
+    # /dev/uinput plus the evdev nodes the container cannot see when they appear later.
+    privileged: true
+    ports:
+      - "6081:6081"
+    environment:
+      # The stamp of the checkout being tested; stand/gui-stand.sh refuses to build without it.
+      GUISTAND_COMMIT: ${GUISTAND_COMMIT:-}
+      GUISTAND_VERSION: ${GUISTAND_VERSION:-}
+    volumes:
+      - ..:/w
+      - guistand-gomod:/root/go/pkg/mod
+      - guistand-gocache:/root/.cache/go-build
+
+volumes:
+  guistand-gomod:
+  guistand-gocache:

@@ -1,0 +1,5 @@
+# === stand/requirements.txt ===
+# Зависимости для автотестов GUI стенда.
+
+pytest>=8.0.0
+playwright>=1.40.0

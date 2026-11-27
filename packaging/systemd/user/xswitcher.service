@@ -1,0 +1,21 @@
+[Unit]
+Description=xswitcher language switcher
+Documentation=https://github.com/ds-voix/xswitcher
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+# The packaged config is /etc/xswitcher/xswitcher.conf, which is the daemon's default path, so no -c
+# here. The binary carries no setuid bit: it reads /dev/input as a member of the "input" group.
+ExecStart=/usr/bin/xswitcher
+# Respawn() and the IPC reload both fork a replacement, hand it the socket and exit 0, so a
+# clean exit is the normal end state of this daemon, not a failure. With Restart=on-failure
+# systemd leaves the unit dead and kills the child the daemon just handed the socket to.
+# Restarting always keeps exactly one daemon running: the default KillMode=control-group
+# kills the handed-over child before the replacement starts, so the instance count cannot grow.
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

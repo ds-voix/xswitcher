@@ -1,0 +1,109 @@
+name: stand
+
+# Spike (#99): can the regression rig run on a GitHub-hosted runner at all?
+#
+# The rig asserts on a real uinput keyboard and a live X server, which the stand already proves inside
+# a Debian container (see stand/README-gui-stand.md). This file asks one further question: does the
+# hosted runner give a job container the device layer the rig needs. `jobs.<job_id>.container.options`
+# is the documented way to pass extra Docker flags ("configure additional Docker container resource
+# options"), and --privileged is what the compose file uses locally, so that is the shape tried here.
+#
+# It is dispatch-only on purpose. Until the first manual run answers the question, wiring it into push
+# or pull_request would make every PR red for a reason nobody has measured.
+#
+# What a green run proves: /dev/uinput is creatable, a uinput keyboard can be opened, Xvfb comes up on
+# a private display, and the two rigs report their expected check counts (63 and 20).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rig:
+    runs-on: ubuntu-24.04
+    container:
+      image: golang:1.26-trixie
+      options: --privileged
+    # Stated, not inherited: this job has the same shape as the release job, and the release job was
+    # measured running its steps under `sh -e {0}` (see the note in release.yml). The GUI rig below
+    # expands `${GITHUB_SHA::7}`, which is a bash-only substitution.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Make git trust the workspace
+        # Root inside the container, the checkout owned by the runner's uid -- git refuses, and the rig
+        # builds the daemon with `go build`, which then dies on "error obtaining VCS status: exit status
+        # 128". Measured in release.yml's note; the rig has the same two actors.
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: System dependencies
+        run: |
+          apt-get update
+          grep -v '^#' stand/apt-deps.txt | grep -v '^[[:space:]]*$' \
+            | xargs -r apt-get install -y --no-install-recommends
+
+      # The device layer is the whole question. On the Docker Desktop VM the host has to load uinput and
+      # evdev first (stand/setup-host.sh); a hosted runner's kernel is not ours to configure, so the step
+      # prints what it finds instead of pretending.
+      - name: Device layer
+        # Two constraints shaped this step. A block scalar in YAML may not contain a line at column zero,
+        # so a nested `python3 - <<PY` heredoc is not just ugly here, it is invalid YAML. And the step
+        # starts a background process: without the trap, a failure in the middle leaves the stand source
+        # keyboard open, and the rig that runs next fails for a reason that has nothing to do with it.
+        run: |
+          trap 'kill ${HOLD:-} 2>/dev/null || true' EXIT
+          echo "--- kernel module state ---"
+          grep -E "^UINPUT |^INPUT " /proc/modules || echo "no uinput/evdev in /proc/modules"
+          echo "--- /dev/uinput ---"
+          ls -l /dev/uinput 2>&1 || true
+          bash stand/mknod-input.sh
+          ls -l /dev/uinput
+          echo "--- can a uinput keyboard be created ---"
+          # The probe must not use the rig's device name. Measured: with `stand-source-keyboard` created
+          # and killed by this step, run.sh reported A6 "source device attached once (hits=2)" and F1
+          # "held=2" -- the daemon sees two keyboards with the name it scans for, so the rig fails on a
+          # leftover of the step that only wanted to ask whether uinput works. A private name keeps the
+          # question and the rig apart, the same isolation stand/gui-stand.sh uses via GUISTAND_SOURCE.
+          sed "s/stand-source-keyboard/ci-device-probe-keyboard/" stand/source_key.py > /tmp/probe_key.py
+          python3 /tmp/probe_key.py hold >/tmp/source-hold.log 2>&1 &
+          HOLD=$!
+          FOUND=1
+          for _ in $(seq 20); do
+            bash stand/mknod-input.sh >/dev/null 2>&1
+            if python3 -c "import evdev,sys; sys.exit(0 if any(evdev.InputDevice(p).name=='ci-device-probe-keyboard' for p in evdev.list_devices()) else 1)"; then
+              FOUND=0
+              break
+            fi
+            sleep 0.5
+          done
+          kill $HOLD 2>/dev/null || true
+          tail -3 /tmp/source-hold.log || true
+          [ "$FOUND" = "0" ] || { echo "the runner gave no usable uinput device"; exit 1; }
+          echo "uinput keyboard created and visible to evdev"
+
+      - name: End-to-end rig (63 checks)
+        run: |
+          bash stand/run.sh | tee /tmp/run-stand.log
+          grep -E "^checks run +" /tmp/run-stand.log | grep -q "63"
+          grep -q "STAND: ALL GREEN" /tmp/run-stand.log
+
+      - name: GUI rig (20 checks)
+        # No noVNC view here: the port is not published and nobody watches it. G7 still maps a window and
+        # captures a screenshot, which is what the check needs.
+        run: |
+          export GUISTAND_COMMIT="${GITHUB_SHA::7}" GUISTAND_VERSION="${GITHUB_REF_NAME}"
+          GUISTAND_DISPLAY=96 bash stand/gui-stand.sh | tee /tmp/gui-stand.log
+          grep -q "checks run.*20 / GUI-STAND: ALL GREEN" /tmp/gui-stand.log
+
+      - name: Upload the rig logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stand-logs
+          path: /tmp/*.log
+          if-no-files-found: warn
