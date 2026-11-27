@@ -53,36 +53,147 @@ This version of xswitcher do the scan of input devices only once (on it's launch
 But there is the internal "respawn" action in case You connects new keyboard/mouse.  
 By default, the long press of "Scroll lock" triggers "respawn". (Respawn does the complete self-restart).
 
+## Adding a language
+
+Translations live under `internal/l10n/locales/`. One JSON file per
+language, named by the BCP-47 base tag (`en.json`, `ru.json`, `de.json`).
+Region variants collapse to their base (`pt_BR` and `pt` both resolve to
+`pt`), so keep one file per language unless you actually need divergent
+translations for two regions.
+
+Every catalogue MUST define two meta-keys that name the language itself:
+
+    {
+      "language.name": "<endonym shown in the picker>",
+      "language.english": "<same language named in English>"
+    }
+
+The picker displays `<name> (<english>)` when they differ and just
+`<name>` when they are identical. A catalogue without these two keys still
+loads but shows its file code instead of a human-readable label.
+
+Every other key is the string passed to `l10n.X("key", "English literal")`
+in the source. The English value in `en.json` MUST be byte-identical to the
+literal at the call site; `go test ./internal/l10n` enforces this parity
+and also checks that every non-English catalogue carries the same set of
+keys and the same `{{.Placeholder}}` names as English. Run it after any
+catalogue edit -- it is the drift guard.
+
+Plurals use `l10n.XN("key", "other-form", count, ...)`. The JSON entry
+uses go-i18n plural forms (`one`, `few`, `many`, `other`); Russian gets
+`one/few/many/other` automatically via `x/text/plural`.
+
+Locale resolution order:
+
+1. `[GUI] Language` in the config (set by the GUI picker).
+2. `XSWITCHER_LANG` environment variable (handy for systemd units:
+   `Environment=XSWITCHER_LANG=ru`).
+3. OS locale (`LC_ALL` / `LC_MESSAGES` / `LANG`, with `LANGUAGE`
+   overriding when the slot is not `C`/`POSIX`).
+4. English fallback.
+
+An unknown or empty code at any step is skipped; an unknown explicit
+choice in `[GUI] Language` is rejected so a typo cannot silently pin
+the UI to the wrong file.
+
+## Themes
+
+The GUI ships three built-in choices -- `system`, `dark`, `light` -- and any
+number of your own. A theme is a JSON file under the user config directory:
+
+    ~/.config/xswitcher/themes/<name>.json
+
+(on Windows: `%APPDATA%\xswitcher\themes`; override the whole directory with
+the `XSWITCHER_THEMES_DIR` environment variable.) The picker in the About tab
+lists the built-ins plus every `*.json` basename found there, applies the
+choice immediately, and persists it as `[GUI] Theme` through the daemon, so it
+survives a restart and is read before the first widget is built.
+
+A file may set any subset of two blocks; everything it omits comes from the
+Fyne palette of the chosen `variant`:
+
+    {
+      "variant": "dark",
+      "name": "Neon",
+      "colors": {
+        "background": "#101418ff",
+        "primary": "#00e5b0ff",
+        "foreground": "#e6edf3ff"
+      },
+      "sizes": {
+        "text": 14,
+        "padding": 8,
+        "inputRadius": 6
+      }
+    }
+
+`variant` is `"dark"` or `"light"` (anything else is treated as dark) and picks
+the fallback palette. `colors` keys are Fyne theme color names (28 in total, for
+example `background`, `foreground`, `primary`, `button`, `menuBackground`,
+`inputBackground`, `hyperlink`, `error`), and values are hex with a leading
+`#`: `#rrggbb` or `#rrggbbaa`.
+`sizes` keys are Fyne theme size names (19 in total, for example `text`,
+`padding`, `innerPadding`, `lineSpacing`, `inputRadius`, `scrollBar`) with
+floating-point values in pixels.
+
+A malformed file, a hex value the loader cannot parse, or a theme name that
+tries to leave the themes directory (`..`, `/`, `\`) is refused: the picker
+shows why and keeps the previous theme.
+
 ## How to build.
-You must install (libX11-devel | libx11-dev) + (libXmu-devel | libxmu-dev) packages for X bindings.  
+You must install (libX11-devel | libx11-dev) package for X bindings.  
 * The package name may, of course, be different in Your distro.  
+X calls are made through cgo, so a C compiler ("gcc" or "clang") must be present too.  
 And, of course, you must have the working go environment.  
-Obtain dependencies:
+Build from the repository root:
 
-    go get "github.com/spf13/pflag" # CLI keys
-    go get "github.com/pelletier/go-toml"      # Actual TOML parser
-    go get "github.com/gvalkov/golang-evdev"   # Keyboard and mouse events
-    go get "github.com/micmonay/keybd_event"   # Virtual keyboard !!(must be improved to deal with complex input)
-    go get "github.com/kballard/go-shellquote" # joining/splitting strings using sh's word-splitting rules
+    go build -o xswitcher ./src/
 
-Unfortunately my pull request https://github.com/micmonay/keybd_event/pull/32 still stays unaccepted.  
-You must put "src/keybd_event/keybd_linux_export.go" inside "keybd_event" sources for successful assembly.  
-You must also move "embeddedConfig" and "exec" internal libraries under Your "src/xswitcher" to satisfy
+Nothing else is required. "go.mod" resolves every dependency by itself, no "go get" round is needed.  
+The virtual keyboard library is not fetched from the network either:
 
-    import (
-    "xswitcher/embeddedConfig"
-    "xswitcher/exec"
-    )
-declaration.
+    replace github.com/micmonay/keybd_event => ./src/keybd_event/
 
-Now You are ready to build. I do the portable static build using the string below:
+points it at the sources kept under "src/keybd_event", where my "keybd_linux_export.go" already lives.  
+(Unfortunately my pull request https://github.com/micmonay/keybd_event/pull/32 still stays unaccepted.)  
+"embeddedConfig", "exec" and "scancodes" are imported through the module name "xswitcher", so they must not
+be moved under "src/" as the earlier version of this instruction told You to do.
 
-    go build -o xswitcher -ldflags "-s -w" --tags static_all src/*.go && chmod +xs xswitcher
+The resulting binary is not static: it links libX11 (and libxcb) dynamically, as any X desktop provides them.  
+To strip it, as I do for the "bin" folder, add the linker flags:
+
+    go build -o xswitcher -ldflags "-s -w" ./src/ && chmod +xs xswitcher
 
 Put the config to "/etc/xswitcher/xswitcher.conf" (or just use embedded one)
 and install xswitcher executable under "/usr/local/bin/" or where You prefer.
 
 Make it executable, e.g. "chmod +xs /usr/local/bin/xswitcher", configure the autostart inside Your X GUI and enjoy.
+
+## How to verify.
+xswitcher is a keylogger on top of the kernel input layer, so an honest check needs "/dev/input" and "uinput",  
+not a mocked keyboard. The "stand" folder holds the end-to-end rig that does exactly this inside one privileged  
+Linux container. It builds the daemon, runs it, creates a *second* virtual keyboard through uinput as the source  
+device, injects keys into it and then asserts on the EV_KEY stream xswitcher emits on its own keyboard:
+
+* "go build", "go vet" and "go test ./..." pass;
+* "HELLO" + Pause wipes 5 symbols, sends the layout shortcut and retypes the word;
+* a focus loss in the middle of a word does not wipe the collected word (the buffers survive "None" focus);
+* a lone LeftCtrl tap only cycles the layout, with no BackSpaces at all.
+
+Run it from the repository root:
+
+    bash stand/run-stand.sh
+
+It needs docker (or podman) with "--privileged" and the "uinput" + "evdev" modules loaded on the host kernel.  
+On Windows 11 with Docker Desktop those modules are built but not autoloaded in the "docker-desktop" VM, so  
+"stand/setup-host.sh" loads them; it has to be re-run after every WSL VM restart. No desktop session, no  
+full distro installation and no second machine are required. Set "DUMPLOG=1" to get the whole daemon log.
+
+What the container deliberately does not prove: the X embedding itself. Xvfb refuses a two-group keymap  
+("setxkbmap -layout us,ru" reports success but leaves a single group), so "XkbLockGroup" cannot be observed  
+there; the shipped default config works around it anyway ("[Wayland] BypassX"), and the stand measures the  
+emitted key stream instead. Layout switching through the X API can only be verified in a real X session  
+with two layouts configured.
 
 ## KDE@Wayland: shit happens
 Wayland cancels all the X groundwork for multi-language systems.
@@ -102,11 +213,20 @@ Then, in "xswitcher.conf":
      Delay = 50
 
 * It takes about 50 ms to complete switching the keyboard layout in my KDE, so I set 50 as the default value.
-* Up to 4 language shortcuts "Layout0"…"Layout3".
+* Up to 4 language shortcuts "Layout0"â€¦"Layout3".
 
 ## Packaging
 I don't have enough time to maintain any distro package (rpm, dpkg, etc.).  
 But it seems to be a good deed. So, everybody who is ready to do this job is welcome.
+
+## Attribution
+
+This section documents who produced the work, not who owns the project. The audit, fixes and
+regression guards in these commits were produced as a stacked PR against upstream
+`ds-voix/xswitcher`; the commits carry per-issue verdicts (#14 fixed here, #12 guarded and
+attributed to upstream `5fe6e3a`, #5 defect + feature, #13/#1 no code changes). Changes by BaHooo.
+
+- Upstream: <https://github.com/ds-voix/xswitcher>
 
 ## Conclusion
 Please, don't be shy to report the bug if something in this README looks unclear.

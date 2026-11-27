@@ -14,39 +14,45 @@ import (
 	"time"
 )
 
+// defaultMaxReply bounds how many bytes of a command's stdout/stderr we keep. The Command.max_reply
+// field is unexported and the only caller never assigns it, so without a fallback io.CopyN(dst, src, 0)
+// copied zero bytes and every Exec action reported empty output. 64 KiB is enough to show a useful
+// reply while a chatty child cannot grow our buffers without limit.
+const defaultMaxReply = 1 << 16
+
 type Command struct {
-	id string        // Sequence ID may be set. Othewise, it is auto-generated.
-	no_exec bool
-	UID, GID uint32  // "run_as" linux representation
-	UseShell bool
-	No_wait bool     // https://golang.org/pkg/os/exec/#Cmd.Start vs "Run()" or m.b. "Wait()"
-	Timeout float64
+	id        string // Sequence ID may be set. Othewise, it is auto-generated.
+	no_exec   bool
+	UID, GID  uint32 // "run_as" linux representation
+	UseShell  bool
+	No_wait   bool // https://golang.org/pkg/os/exec/#Cmd.Start vs "Run()" or m.b. "Wait()"
+	Timeout   float64
 	max_reply int64
-// https://golang.org/pkg/os/exec/#Cmd
+	// https://golang.org/pkg/os/exec/#Cmd
 	Set_env []string
 	Set_dir string
 	Command string
-	Args []string
-	StdIn []byte
+	Args    []string
+	StdIn   []byte
 }
 
 type Result struct {
-	ID string             `json:"id"`
-	Processed bool        `json:"processed"` // Was this command ever been processed?
-	Command string        `json:"command"`
-	Args []string         `json:"args,omitempty"`
-	Status int            `json:"status"`
-	StdOut []byte         `json:"stdout,omitempty"`
-	StdErr []byte         `json:"stderr,omitempty"`
+	ID        string   `json:"id"`
+	Processed bool     `json:"processed"` // Was this command ever been processed?
+	Command   string   `json:"command"`
+	Args      []string `json:"args,omitempty"`
+	Status    int      `json:"status"`
+	StdOut    []byte   `json:"stdout,omitempty"`
+	StdErr    []byte   `json:"stderr,omitempty"`
 }
 
 // https://golang.org/pkg/os/exec/#Cmd
-func ExecCommand(c *Command) (*Result) {
-//	var waitWorkers *sync.WaitGroup
+func ExecCommand(c *Command) *Result {
+	//	var waitWorkers *sync.WaitGroup
 
 	r := &Result{ID: c.id,
-					Command: c.Command,
-					Args: c.Args}
+		Command: c.Command,
+		Args:    c.Args}
 
 	cmd := exec.Command(c.Command)
 	if c.UseShell { // Pack into bash environment (In fact, bash is *sh's mainstream. And I unwill to deep into specifics)
@@ -77,15 +83,24 @@ func ExecCommand(c *Command) (*Result) {
 
 	// http://www.agardner.me/golang/garbage/collection/gc/escape/analysis/2015/10/18/go-escape-analysis.html
 	// https://habr.com/ru/company/intel/blog/422447/
-	var _stdout, _stderr     bytes.Buffer
-	var stdoutIn, stderrIn   io.ReadCloser
+	var _stdout, _stderr bytes.Buffer
+	var stdoutIn, stderrIn io.ReadCloser
 	var errStdout, errStderr error
 
 	stdout := io.Writer(&_stdout)
 	stderr := io.Writer(&_stderr)
-  	if ! c.No_wait { // Otherwise, just fork process with /dev/null at stdout&stderr.
-		stdoutIn, _ = cmd.StdoutPipe()
-		stderrIn, _ = cmd.StderrPipe()
+	if !c.No_wait { // Otherwise, just fork process with /dev/null at stdout&stderr.
+		var perr error
+		if stdoutIn, perr = cmd.StdoutPipe(); perr != nil {
+			r.Status = -1
+			r.StdErr = []byte("stdout pipe: " + perr.Error())
+			return r
+		}
+		if stderrIn, perr = cmd.StderrPipe(); perr != nil {
+			r.Status = -1
+			r.StdErr = []byte("stderr pipe: " + perr.Error())
+			return r
+		}
 	}
 
 	r.Status = 0
@@ -97,7 +112,7 @@ func ExecCommand(c *Command) (*Result) {
 	err := cmd.Start()
 	r.Processed = true
 	if err != nil {
-		r.StdErr= []byte(err.Error())
+		r.StdErr = []byte(err.Error())
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			if _status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
 				r.Status = _status.ExitStatus()
@@ -108,73 +123,57 @@ func ExecCommand(c *Command) (*Result) {
 
 		return r
 	}
-//	fmt.Printf("pid = %d\n", cmd.Process.Pid)
+	//	fmt.Printf("pid = %d\n", cmd.Process.Pid)
 
 	if c.No_wait {
 		cmd.Process.Release() // Drop PPID to avoid zombies
 		return r
 	}
 
-	// Wait for the process to finish or kill it after a timeout (whichever happens first):
+	// Terminate the child - and its whole process group, thanks to Setpgid - if it overruns the
+	// timeout. The previous version polled cmd.ProcessState in a goroutine while cmd.Wait() wrote it
+	// (a data race that `go test -race` flags), and every "if cmd == nil" guard was dead code because
+	// cmd is a non-nil local. A done channel closed on return replaces both: the killer only reads the
+	// pid (an int copy) and done, so it never touches the reaped cmd or the reused pgid after Wait.
+	pid := cmd.Process.Pid
+	done := make(chan struct{})
+	defer close(done)
 	if c.Timeout > 0 {
-		go func(cmd *exec.Cmd, pid int) { // !!! panic: runtime error: invalid memory address or nil pointer dereference
-			for i := 0; i < int(c.Timeout * 10); i++ {
-				time.Sleep(time.Second / 10)
-				if cmd == nil { return }
-				if cmd.ProcessState != nil {
-					break
-				}
+		go func() {
+			select {
+			case <-done:
+				return
+			case <-time.After(time.Duration(c.Timeout * float64(time.Second))):
 			}
-
-			if cmd.ProcessState == nil {
-//				cmd.Process.Signal(syscall.SIGTERM) // No, such a method terminates only this PID, leaving orphans!
-				if cmd == nil { return }
-				syscall.Kill(-pid, syscall.SIGTERM) // !!! [signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0x7c1ef0]
-				time.Sleep(time.Second / 2)
-				if cmd == nil { return }
+			syscall.Kill(-pid, syscall.SIGTERM)
+			select {
+			case <-done: // the SIGTERM already let cmd.Wait() reap it
+			case <-time.After(time.Second / 2):
 				syscall.Kill(-pid, syscall.SIGKILL)
 			}
-		} (cmd, cmd.Process.Pid)
-	} else if c.Timeout == 0 { // Wait for interrupt
-		go func(cmd *exec.Cmd, pid int) {
-//			defer waitWorkers.Done()
-			for {
-				time.Sleep(time.Second / 50)
-				if cmd == nil { return }
-				if cmd.ProcessState != nil {
-					break
-				}
-/*
-				if interrupt {
-					break
-				}
-*/
-			}
-
-			if cmd.ProcessState == nil {
-//				cmd.Process.Signal(syscall.SIGTERM) // No, such a method terminates only this PID, leaving orphans!
-				if cmd == nil { return }
-				syscall.Kill(-pid, syscall.SIGTERM) // !!! [signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0x7c1ef0]
-				time.Sleep(time.Second / 2)
-				if cmd == nil { return }
-				syscall.Kill(-pid, syscall.SIGKILL)
-			}
-		} (cmd, cmd.Process.Pid)
+		}()
 	}
+	// Timeout == 0 means no deadline: cmd.Wait() below simply blocks until the child exits on its own.
+	// The old zero-timeout goroutine only busy-polled the racy ProcessState and its kill path was
+	// unreachable (guarded by ProcessState == nil after Wait already set it), so it is dropped.
 
 	// https://blog.kowalczyk.info/article/wOYk/advanced-command-execution-in-go-with-osexec.html
+	maxReply := c.max_reply
+	if maxReply <= 0 {
+		maxReply = defaultMaxReply
+	}
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		_, errStdout = io.CopyN(stdout, stdoutIn, c.max_reply)
+		_, errStdout = io.CopyN(stdout, stdoutIn, maxReply)
 		if errStdout == io.EOF {
 			errStdout = nil
 		} else {
 			io.Copy(ioutil.Discard, stdoutIn) // Discard all the rest of stdout
 		}
 		wg.Done()
-	} ()
-	_, errStderr = io.CopyN(stderr, stderrIn, c.max_reply)
+	}()
+	_, errStderr = io.CopyN(stderr, stderrIn, maxReply)
 	if errStderr == io.EOF {
 		errStderr = nil
 	} else {
