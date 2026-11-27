@@ -465,5 +465,23 @@ var (
 	"MAX": 0x2ff,
 	} // 768 elements 0..767
 
+	// Printed-character spellings of the punctuation keys, added into key_def
+	// by keys() so a config can name a key by the character it types. They
+	// share codes with the canonical names and must never feed key_name:
+	// the templates are written with canonical spellings only.
+	keyAliases = map[string]uint{
+		"MINUS": 12,
+		"EQUAL": 13,
+		"[":     26,
+		"]":     27,
+		";":     39,
+		"'":     40,
+		"`":     41,
+		"\\":    43,
+		",":     51,
+		".":     52,
+		"/":     53,
+	}
+
 	key_name [KEYS_SIZE]string // "Reverse map", I consider int-array is better storage.
 )

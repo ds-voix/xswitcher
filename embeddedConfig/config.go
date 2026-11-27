@@ -13,6 +13,13 @@ const Toml string = `
 
 [Keyboard]
   Delay = 5 # Delay in the virtual keyboard before sending the next event
+  # How "RetypeWord" removes the word it is about to type again:
+  # false - press BackSpace once per character, which every application has always understood;
+  # true  - select the characters with Shift+Left and delete the selection with a single BackSpace,
+  #         so the application performs ONE edit instead of one per character and cannot drop half of
+  #         them while busy. Needs an application that honors a Shift-selection made through the
+  #         keyboard, which is exactly what a remote/emulated input sometimes does not do.
+  WipeBySelection = false
 
 [Templates] # "@name@" to simplify expressions
  # Words can consist of these chars (regex) !!! There must be only "canonic" key names, or regex will fail to match !!!
@@ -141,11 +148,17 @@ const Toml string = `
 [Action.Hook1] # Run external commands
   Action = [ "Exec" ]
   Exec = "cat > /tmp/xxx" # All the input after the 1'st space will be reassembled into the CLI args.
-#  Timeout = 1000 # Wait up to 1 second, then kill the executing process.
+#  Timeout = 1 # Seconds to wait for the command, then kill it. 0 or a commented key = no deadline.
 #  Wait = true # Wait for termination, then output the result to STDOUT|STDERR.
   # External hook can process collected buffer by it's own means.
   # The last typed word, or sentence, or just the custom string could be passed to stdIn.
-  SendBuffer = "WORD" # "WORD"|"SENTENCE"|"any custom input\n"
+  # "WORD"|"SENTENCE" arrive as the characters they were typed with. The events the daemon collects
+  # name key positions, never glyphs, so the rendering uses the layout those positions belong to
+  # (the first row of [ActionKeys] Layouts, US in this config): a word typed in another group comes
+  # out as the latin glyphs of the same physical keys.
+  # "CLIPBOARD" passes the text the clipboard currently holds. That is the only way to hand the hook a
+  # selection: the daemon watches keystrokes and never sees what was highlighted with the mouse.
+  SendBuffer = "WORD" # "WORD"|"SENTENCE"|"CLIPBOARD"|"any custom input\n"
 
   UseShell = true # Execute inside /bin/bash
 #  Directory = "/path/to/" # Change the working directory to this one.

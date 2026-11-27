@@ -1,0 +1,145 @@
+the time people can be used for what they want to do with their lives
+i have a question about this and i do not know the answer to it
+you should never tell anybody what you think about them behind their back
+he said that she would come here after work if the weather was good
+we were waiting for the train but it was late and nobody told us anything
+they have never seen the sea and they want to go there next summer
+this is not the place where we met the first time, it is another one
+that dog ran across the street and stopped in front of the old shop
+her brother works at the hospital and his wife teaches music at school
+my friend bought a new computer because the old one was too slow
+what did you do yesterday and did you finish the report for the team
+when the lights went out we found a candle and sat down by the window
+where is the station, the museum and the little cafe near the river
+why would anybody leave a door open on such a cold winter night
+who told you that we are moving to another city in the spring
+which of these books did you read last and which one did you like
+how long does it take to walk from here to the other side of town
+all the children were playing in the garden while their parents talked
+every morning she makes coffee, reads the news and walks to the office
+any one of these answers could be right depending on the question
+some people like the mountains and others prefer the flat warm coast
+no one answered the phone so i wrote a letter and sent it today
+both of the keys open the front door but only one opens this box
+each student received a book at the end of the year for hard work
+after the meeting we went to lunch and talked about the new project
+before you leave please check the window, the lamp and the stove
+while he was reading the paper she was cooking dinner for everyone
+since the last winter the river has frozen twice and thawed again
+during the night the wind broke a branch and it fell on the car
+although the road was closed they found another way through the forest
+because the weather was fine we had lunch outside on the terrace
+if you need help you should ask and not wait for somebody to notice
+then the driver turned the engine off and we all got out slowly
+so the whole evening passed quietly with music and old photographs
+but there is always something to say when the truth is different
+and the rain came down on the empty street and washed the dust away
+or you can take the bus and change near the bridge by the market
+water runs from the tap, the kettle boils and the cup is warm
+bread and butter, cheese and ham, tea with milk and a slice of cake
+the morning light came through the curtain and fell across the floor
+a man walked his dog along the path and nodded to the gardener
+women were talking at the door about the price of meat and fish
+the doctor wrote down the name and said to come back in a week
+teachers know more than they say and parents learn more than they think
+children ask questions that grownups are afraid to ask each other
+the city never sleeps but the villages sleep early in the dark
+trees lose their leaves in autumn and the grass turns yellow and dry
+snow covers the fields, the roofs and the tops of the hills
+birds fly south when the cold comes and return in the first warm days
+a house with a red door stood at the corner of two quiet streets
+the window of our room looked out on a garden and a tall wall
+the door was locked, the key was gone, and the phone was dead
+money buys a bed but not sleep, a clock but not more time
+books fill the shelves, the table and the floor of this small room
+paper, ink and a pen are all that a letter needs to travel
+the fire burned low and the ashes of the wood turned grey and white
+smoke rose from the chimney and spread across the pale evening sky
+the sound of the sea is loud inside an empty shell you hold
+music played from another flat and the melody kept coming back
+the old clock in the hall stopped at twenty past three last night
+her voice was quiet, but every word was clear and easy to follow
+the train moved slowly out of the station and the platform grew small
+a bus full of tired people climbed the hill and came to the top
+the driver knew every street, every corner and every shortcut home
+bicycles stood against the wall and the bell of one of them rang
+footsteps on the stairs, a key in the lock, and the door opened
+the cat sat by the fire, watched the room and went to sleep
+dogs bark at strangers, at cats and at their own reflection
+horses carried men across the plains and pulled the plough in spring
+cows stood in the field in the rain and did not move an inch
+the farmer sells milk, eggs, butter and cheese in the town market
+the baker wakes at four and lights the oven before it is dark
+the fisherman mended his net by the water and sang an old song
+the carpenter cut the board, planed it and joined the edges tight
+the mason laid brick upon brick and the wall rose over the gate
+the tailor took the measure, cut the cloth and sewed the seam straight
+the smith heated the iron, struck it and plunged it in the trough
+the miner went down before dawn and came up with dust on his face
+the sailor came home after a year and stood on the wet quay
+the soldier marched, waited, and marched again until the war was over
+the nurse changed the bandage and wrote the time beside the name
+the lawyer read the paper twice and asked one simple question
+the priest rang the bell and the people gathered in the square
+the actor forgot his line, then found it and the scene went well
+the painter mixed the colour and put it on the canvas slowly
+the writer filled the page, crossed a line out and started again
+the musician tuned the guitar and played the same bar for an hour
+the teacher wrote the date at the top and read the first line
+the student copied the notes and asked to hear it once more
+science explains the world and art shows how it feels to live
+history remembers what people did and geography where they did it
+mathematics is a language of signs and logic is its grammar
+medicine learns from every patient and every mistake it made
+technology changes faster than the laws that try to follow it
+nature does not hurry and yet everything gets done in its season
+work takes the day, rest takes the night and both take their time
+play is serious for a child and light for anybody else
+love makes a person brave and, at the same time, careful
+hate is heavy to carry and it wears the one who carries it
+hope keeps the lamp burning when there is nothing left to see
+fear makes a sound of its own and calls it the truth
+anger says what regret will later have to unsay
+patience wears out the hardest stone with a slow and steady hand
+truth is simple and people make it complicated before they believe it
+a promise is a small debt that grows when it is forgotten
+friendship lives on attention and dies of the lack of it
+family is the first place where a person learns to share
+silence between two people can be comfortable or unbearable
+memory keeps the good parts and quietly loses the bad ones
+dreams are not plans, but every plan began as a dream
+an idea is worth nothing until somebody starts to work on it
+practice makes a difficult thing ordinary and an ordinary thing easy
+mistakes are the price of learning and the fee is paid in public
+doubt is the beginning of thought and certainty is the end of it
+question what you are told and answer what you are asked
+listen more than you speak and speak when it is time to speak
+act slowly, decide quickly and never promise what you cannot do
+
+# Frequent word forms, listed rather than woven into sentences: a bigram model
+# needs the pairs themselves, and everyday endings carry most of them.
+being been have has had having doing done does did doing
+saying said says saying telling told asking asked knowing knew
+thinking thought understanding understood seeing saw feeling felt
+making made putting put taking took giving gave coming came
+working worked living lived staying stayed moving moved turning
+hand feet head face eyes nose mouth finger shoulder back heart
+blood doctor medicine hospital health illness wound pain fever
+body skin bone tooth hair breath sleep dream rest tired awake
+night morning evening afternoon noon midnight hour minute second
+years months weeks tuesday thursday friday sunday monday saturday
+house room kitchen bedroom closet table chair floor ceiling wall
+door window stair garden fence gate village town street square
+money price value dollar change debt payment bank account bill
+bread butter coffee sugar pepper salt cheese meat fish eggs fruit
+juice soup salad cake bread supper dinner meal taste smell
+journal paper page paragraph title letter stamp parcel address
+school class lesson task example rule order right wrong
+law court judge crime prison guilty defence witness jury
+speech voice sound noise silence whisper shout word meaning
+little large recent ancient modern narrow broad shallow hollow
+pretty ugly rapid gentle pleasant ordinary sudden frequent
+seldom indeed almost rather enough quite fairly partly merely
+before behind within without across against along beside beyond
+therefore however instead although because whether unless
+anyone someone everyone nobody anything something nothing
